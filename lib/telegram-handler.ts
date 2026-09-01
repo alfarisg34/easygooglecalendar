@@ -3,6 +3,7 @@ import { extractEventFromSource } from './gemini';
 import { DateTime } from 'luxon';
 import { getUserGoogleAuth, deleteUserGoogleAuth } from './token-store';
 import { insertGoogleCalendarEvent } from './google-calendar-api';
+import { getUserByTelegram } from './db';
 
 const TELEGRAM_API_URL = 'https://api.telegram.org';
 
@@ -108,6 +109,22 @@ export async function handleTelegramWebhook(
   const text = (msg.text || msg.caption || '').trim();
   const cleanText = text.toLowerCase();
 
+  // Resolve user identity from Neon DB & Token Store
+  const dbUser = await getUserByTelegram({ tgUserId: userId, botToken });
+  const rawAuth = await getUserGoogleAuth(userId);
+  const userAuth = rawAuth || (dbUser?.google_refresh_token ? {
+    userId: dbUser.id,
+    email: dbUser.email,
+    name: dbUser.name,
+    picture: dbUser.picture,
+    refreshToken: dbUser.google_refresh_token,
+    accessToken: dbUser.google_access_token,
+    expiryDate: dbUser.google_token_expiry ? Number(dbUser.google_token_expiry) : undefined,
+    updatedAt: dbUser.updated_at || new Date().toISOString()
+  } : null);
+
+  const effectiveGeminiKey = geminiKey || dbUser?.gemini_api_key || process.env.GEMINI_API_KEY || '';
+
   // Command: /connect or /login
   if (cleanText.startsWith('/connect') || cleanText.startsWith('/login') || cleanText.startsWith('/auth')) {
     const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
@@ -124,12 +141,11 @@ export async function handleTelegramWebhook(
 
   // Command: /status
   if (cleanText.startsWith('/status') || cleanText.startsWith('/cek')) {
-    const userAuth = await getUserGoogleAuth(userId);
     if (userAuth && userAuth.email) {
       await sendTelegramMessage({
         botToken,
         chatId,
-        text: `✅ *Status Akun Terhubung:*\n\n📧 *Email*: ${userAuth.email}\n👤 *Nama*: ${userAuth.name || '-'}\n🔄 *Mode*: Direct 0-Click Auto-Sync Aktif\n\n💡 Ketik \`/disconnect\` jika ingin mengganti atau memutuskan akun Google.`
+        text: `✅ *Status Akun Terhubung:*\n\n📧 *Email*: ${userAuth.email}\n👤 *Nama*: ${userAuth.name || '-'}\n🔄 *Mode*: Direct 0-Click Auto-Sync Aktif\n📅 *Target Kalender*: ${dbUser?.calendar_id || 'primary'}\n\n💡 Ketik \`/disconnect\` jika ingin mengganti atau memutuskan akun Google.`
       });
     } else {
       const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
@@ -158,7 +174,6 @@ export async function handleTelegramWebhook(
 
   // Command: /start
   if (cleanText.startsWith('/start') || cleanText === 'start' || cleanText === 'halo' || cleanText === 'hai') {
-    const userAuth = await getUserGoogleAuth(userId);
     const isConnected = Boolean(userAuth && userAuth.email);
     const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
 
@@ -176,7 +191,7 @@ Saya siap membantu Anda mencatat jadwal rapat, bimtek, webinar, dan agenda dinas
 2. 🖼️ Kirimkan *Poster / Flyer* (JPG/PNG)
 3. 💬 Salin & tempel teks pesan chat / broadcast
 
-${!isConnected ? '💡 *Tips*: Ketik `/connect` untuk menghubungkan akun Google Calendar Anda agar agenda otomatis tersimpan secara instan!' : ''}`,
+${!isConnected ? '💡 *Tips*: Ketik `/connect` atau klik tombol di bawah untuk menghubungkan akun Google Calendar Anda agar agenda otomatis tersimpan secara instan (0-Click)!' : '✨ *Anda sudah siap*: Cukup kirimkan dokumen surat atau poster ke sini!'}`,
       inlineButtons: !isConnected ? [{ text: '🔑 Hubungkan Google Calendar', url: authUrl }] : undefined
     });
     return { ok: true };
@@ -246,7 +261,15 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` untuk menghubungkan akun Google 
         return { ok: true };
       }
 
-      await dispatchCalendarResult({ botToken, chatId, userId, event: result.event, hostOrigin });
+      await dispatchCalendarResult({ 
+        botToken, 
+        chatId, 
+        userId, 
+        event: result.event, 
+        hostOrigin,
+        userAuth,
+        calendarId: dbUser?.calendar_id || 'primary'
+      });
     } catch (err: any) {
       await sendTelegramMessage({
         botToken,
@@ -259,11 +282,11 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` untuk menghubungkan akun Google 
 
   // Process Photo / Poster
   if (msg.photo && msg.photo.length > 0) {
-    if (!geminiKey && !process.env.GEMINI_API_KEY) {
+    if (!effectiveGeminiKey) {
       await sendTelegramMessage({
         botToken,
         chatId,
-        text: `⚠️ *Google Gemini API Key Belum Dikonfigurasi*\n\nBot membutuhkan API Key Gemini untuk membaca poster. Silakan pasang \`GEMINI_API_KEY\` di Vercel Environment Variables atau masukkan Gemini API Key di website EasyCal sebelum menyetel webhook.`
+        text: `⚠️ *Google Gemini API Key Belum Dikonfigurasi*\n\nBot membutuhkan API Key Gemini untuk membaca poster. Silakan pasang \`GEMINI_API_KEY\` di Vercel Environment Variables atau masukkan Gemini API Key di website EasyCal.`
       });
       return { ok: true };
     }
@@ -279,7 +302,7 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` untuk menghubungkan akun Google 
     try {
       const { base64Data, mimeType } = await downloadTelegramFile({ botToken, fileId: bestPhoto.file_id });
       const result = await extractEventFromSource({
-        apiKey: geminiKey,
+        apiKey: effectiveGeminiKey,
         sourceType: 'image',
         base64Data,
         mimeType
@@ -294,7 +317,15 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` untuk menghubungkan akun Google 
         return { ok: true };
       }
 
-      await dispatchCalendarResult({ botToken, chatId, userId, event: result.event, hostOrigin });
+      await dispatchCalendarResult({ 
+        botToken, 
+        chatId, 
+        userId, 
+        event: result.event, 
+        hostOrigin,
+        userAuth,
+        calendarId: dbUser?.calendar_id || 'primary'
+      });
     } catch (err: any) {
       await sendTelegramMessage({
         botToken,
@@ -307,11 +338,11 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` untuk menghubungkan akun Google 
 
   // Process Text Chat
   if (text.length >= 20) {
-    if (!geminiKey && !process.env.GEMINI_API_KEY) {
+    if (!effectiveGeminiKey) {
       await sendTelegramMessage({
         botToken,
         chatId,
-        text: `⚠️ *Google Gemini API Key Belum Dikonfigurasi*\n\nBot membutuhkan API Key Gemini untuk membaca teks undangan. Silakan pasang \`GEMINI_API_KEY\` di Vercel Environment Variables atau masukkan Gemini API Key di website EasyCal sebelum menyetel webhook.`
+        text: `⚠️ *Google Gemini API Key Belum Dikonfigurasi*\n\nBot membutuhkan API Key Gemini untuk membaca teks undangan. Silakan pasang \`GEMINI_API_KEY\` di Vercel Environment Variables atau masukkan Gemini API Key di website EasyCal.`
       });
       return { ok: true };
     }
@@ -319,12 +350,12 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` untuk menghubungkan akun Google 
     await sendTelegramMessage({
       botToken,
       chatId,
-      text: `⏳ *Pesan teks undangan diterima.* Sedang mengekstrak rincian acara...`
+      text: `⏳ *Menganalisis teks undangan rapat/kegiatan...*`
     });
 
     try {
       const result = await extractEventFromSource({
-        apiKey: geminiKey,
+        apiKey: effectiveGeminiKey,
         sourceType: 'text',
         text
       });
@@ -333,12 +364,20 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` untuk menghubungkan akun Google 
         await sendTelegramMessage({
           botToken,
           chatId,
-          text: `❌ *Gagal mengekstrak jadwal teks:* ${result.error || 'Informasi tidak lengkap.'}`
+          text: `❌ *Gagal mengekstrak jadwal teks:* ${result.error || 'Teks tidak memuat informasi agenda.'}`
         });
         return { ok: true };
       }
 
-      await dispatchCalendarResult({ botToken, chatId, userId, event: result.event, hostOrigin });
+      await dispatchCalendarResult({ 
+        botToken, 
+        chatId, 
+        userId, 
+        event: result.event, 
+        hostOrigin,
+        userAuth,
+        calendarId: dbUser?.calendar_id || 'primary'
+      });
     } catch (err: any) {
       await sendTelegramMessage({
         botToken,
@@ -350,7 +389,6 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` untuk menghubungkan akun Google 
   } else if (text.length > 0) {
     // Friendly response for short messages like 'halo', 'tes', 'hai'
     const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
-    const userAuth = await getUserGoogleAuth(userId);
     const isConnected = Boolean(userAuth && userAuth.email);
 
     await sendTelegramMessage({
@@ -384,9 +422,10 @@ async function dispatchCalendarResult(params: {
   userId: number;
   event: any;
   hostOrigin: string;
+  userAuth?: any;
+  calendarId?: string;
 }) {
-  const { botToken, chatId, userId, event, hostOrigin } = params;
-  const userAuth = await getUserGoogleAuth(userId);
+  const { botToken, chatId, userId, event, hostOrigin, userAuth, calendarId } = params;
 
   const startDt = DateTime.fromISO(event.start_time).setZone('Asia/Jakarta');
   const endDt = DateTime.fromISO(event.end_time).setZone('Asia/Jakarta');
@@ -394,8 +433,9 @@ async function dispatchCalendarResult(params: {
   const endFormatted = endDt.isValid ? endDt.toFormat('HH:mm') : event.end_time;
 
   // Case A: User has connected Google Calendar (Direct Auto-Sync!)
-  if (userAuth && userAuth.refreshToken) {
-    const insertResult = await insertGoogleCalendarEvent(userId, event);
+  if (userAuth && (userAuth.refreshToken || userAuth.google_refresh_token)) {
+    const targetUserId = userAuth.userId || userAuth.id || userId;
+    const insertResult = await insertGoogleCalendarEvent(targetUserId, event, calendarId || 'primary');
 
     if (insertResult.success) {
       let replyText = `✅ *AGENDA OTOMATIS TERSIMPAN KE GOOGLE CALENDAR!* 📅\n\n` +

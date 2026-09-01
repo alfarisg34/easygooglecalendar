@@ -103,16 +103,26 @@ function saveLocalUsers(data: Record<string, UserRecord>) {
 }
 
 /**
- * Retrieves a user by their unique ID (e.g. google_id, email, or user_id)
+ * Retrieves a user by their unique ID (e.g. google_id, email, user_id, or telegram ID)
  */
 export async function getUserById(id: string): Promise<UserRecord | null> {
   const dbUrl = getDatabaseUrl();
+  const cleanId = String(id).replace('tg_', '');
+  const tgId = `tg_${cleanId}`;
+
   if (dbUrl) {
     try {
       await initDatabase();
       const sql = neon(dbUrl);
       const rows = await sql`
-        SELECT * FROM users WHERE id = ${id} OR email = ${id} LIMIT 1
+        SELECT * FROM users 
+        WHERE id = ${id} 
+           OR id = ${cleanId}
+           OR id = ${tgId}
+           OR email = ${id} 
+           OR telegram_chat_id = ${cleanId}
+           OR telegram_chat_id = ${tgId}
+        LIMIT 1
       `;
       if (rows && rows.length > 0) {
         return rows[0] as UserRecord;
@@ -125,8 +135,65 @@ export async function getUserById(id: string): Promise<UserRecord | null> {
 
   // Memory & Local fallback
   if (memoryUserMap.has(id)) return memoryUserMap.get(id) || null;
+  if (memoryUserMap.has(cleanId)) return memoryUserMap.get(cleanId) || null;
   const local = getLocalUsers();
-  return local[id] || null;
+  return local[id] || local[cleanId] || local[tgId] || null;
+}
+
+/**
+ * Retrieves a user by Telegram User/Chat ID or Bot Token
+ */
+export async function getUserByTelegram(params: {
+  tgUserId?: string | number;
+  botToken?: string;
+}): Promise<UserRecord | null> {
+  const dbUrl = getDatabaseUrl();
+  const rawId = params.tgUserId ? String(params.tgUserId).replace('tg_', '') : '';
+  const tgId = `tg_${rawId}`;
+
+  if (dbUrl) {
+    try {
+      await initDatabase();
+      const sql = neon(dbUrl);
+
+      // 1. Search by exact telegram_chat_id or id
+      if (rawId) {
+        const rows = await sql`
+          SELECT * FROM users 
+          WHERE telegram_chat_id = ${rawId} 
+             OR telegram_chat_id = ${tgId}
+             OR id = ${rawId}
+             OR id = ${tgId}
+          LIMIT 1
+        `;
+        if (rows && rows.length > 0 && rows[0].google_refresh_token) {
+          return rows[0] as UserRecord;
+        }
+      }
+
+      // 2. Search by bot_token if provided
+      if (params.botToken) {
+        const rows = await sql`
+          SELECT * FROM users 
+          WHERE telegram_bot_token = ${params.botToken}
+          LIMIT 1
+        `;
+        if (rows && rows.length > 0 && rows[0].google_refresh_token) {
+          return rows[0] as UserRecord;
+        }
+      }
+    } catch (err) {
+      console.error('Neon DB getUserByTelegram error:', err);
+    }
+  }
+
+  // Local fallback
+  if (rawId) {
+    const byId = await getUserById(rawId);
+    if (byId && byId.google_refresh_token) return byId;
+  }
+
+  return null;
 }
 
 /**

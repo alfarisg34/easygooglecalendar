@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { exchangeCodeForTokens, getEffectiveOrigin, getEffectiveRedirectUri } from '@/lib/google-auth';
-import { upsertGoogleUser } from '@/lib/db';
+import { upsertGoogleUser, updateUserSettings } from '@/lib/db';
 import { saveUserGoogleAuth } from '@/lib/token-store';
 import { sendTelegramMessage } from '@/lib/telegram-handler';
 import { createSessionToken, SESSION_COOKIE_NAME } from '@/lib/auth-session';
@@ -40,7 +40,31 @@ export async function GET(req: NextRequest) {
       expiryDate: tokens.expiry_date || undefined
     });
 
-    // 2. Also sync to legacy/token-store for Telegram compatibility
+    // 2. If originated from Telegram, link telegram_chat_id to user in DB
+    if (state.startsWith('tg_')) {
+      const rawTgId = state.replace('tg_', '');
+      await updateUserSettings(dbUser.id, {
+        telegram_chat_id: rawTgId
+      });
+
+      const effectiveBotToken = process.env.TELEGRAM_BOT_TOKEN || dbUser.telegram_bot_token;
+      const tgChatIdNum = parseInt(rawTgId, 10);
+
+      if (effectiveBotToken && !isNaN(tgChatIdNum)) {
+        sendTelegramMessage({
+          botToken: effectiveBotToken,
+          chatId: tgChatIdNum,
+          text: `🎉 *Akun Google Calendar Anda Berhasil Terhubung!*
+
+📧 *Akun*: ${email}
+👤 *Nama*: ${name}
+
+Sekarang setiap dokumen surat dinas, poster, atau pesan broadcast yang Anda kirim ke bot ini akan otomatis langsung dijadwalkan ke Google Calendar Anda secara realtime (0-Click Sync)! 📅✨`
+        }).catch(err => console.error('Failed to send Telegram connect confirmation:', err));
+      }
+    }
+
+    // 3. Also sync to legacy/token-store for Telegram compatibility
     await saveUserGoogleAuth({
       userId: state,
       email,
@@ -51,23 +75,6 @@ export async function GET(req: NextRequest) {
       expiryDate: tokens.expiry_date || undefined,
       updatedAt: new Date().toISOString()
     });
-
-    // 3. Telegram notification if originated from Telegram
-    if (state.startsWith('tg_') && process.env.TELEGRAM_BOT_TOKEN) {
-      const tgChatId = parseInt(state.replace('tg_', ''), 10);
-      if (!isNaN(tgChatId)) {
-        sendTelegramMessage({
-          botToken: process.env.TELEGRAM_BOT_TOKEN,
-          chatId: tgChatId,
-          text: `🎉 *Akun Google Calendar Anda Berhasil Terhubung!*
-
-📧 *Akun*: ${email}
-👤 *Nama*: ${name}
-
-Sekarang setiap dokumen atau poster yang Anda kirim ke bot ini akan otomatis dijadwalkan ke Google Calendar secara realtime (0-Click)! 📅✨`
-        }).catch(err => console.error('Failed to send Telegram connect confirmation:', err));
-      }
-    }
 
     // 4. Generate JWT session token
     const sessionToken = await createSessionToken({
