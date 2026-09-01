@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
       const file = formData.get('file') as File | null;
       const text = formData.get('text') as string | null;
       const apiKey = (formData.get('apiKey') as string) || req.headers.get('x-api-key') || '';
-      const model = (formData.get('model') as string) || 'gemini-2.5-flash';
+      const model = (formData.get('model') as string) || 'gemini-3.6-flash';
       const engine = (formData.get('engine') as any) || 'gemini';
       autoSync = formData.get('autoSync') === 'true';
       userId = (formData.get('userId') as string) || userId;

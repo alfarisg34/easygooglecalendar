@@ -67,7 +67,7 @@ GRATIS & TERBUKA UNTUK UMUM!`;
 export default function HomePage() {
   // Config & BYOK State
   const [apiKey, setApiKey] = useState<string>('');
-  const [model, setModel] = useState<string>('gemini-2.5-flash');
+  const [model, setModel] = useState<string>('gemini-3.6-flash');
   const [engine, setEngine] = useState<'gemini' | 'ocr_service'>('gemini');
 
   // Input States
@@ -413,9 +413,10 @@ ${extractedEvent.google_calendar_url}`;
             value={model}
             onChange={(e) => setModel(e.target.value)}
           >
-            <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast)</option>
-            <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+            <option value="gemini-3.6-flash">Gemini 3.6 Flash (Terbaru)</option>
             <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+            <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+            <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
           </select>
 
           {/* Telegram Connect Button */}

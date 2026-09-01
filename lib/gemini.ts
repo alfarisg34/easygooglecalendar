@@ -100,7 +100,7 @@ export async function extractEventFromSource(request: ExtractionRequest): Promis
     };
   }
 
-  const model = request.model || 'gemini-2.5-flash';
+  const model = request.model || 'gemini-3.6-flash';
   const nowISO = new Date().toISOString();
 
   // Route 1: Using Custom OCR Service first if requested
@@ -251,7 +251,7 @@ Format JSON yang Wajib Dikembalikan (HANYA JSON murni tanpa markdown):
 }
 
 /**
- * Helper to call Google Gemini GenerateContent REST API
+ * Helper to call Google Gemini GenerateContent REST API with automatic model fallback
  */
 async function callGeminiGenerateContent(params: {
   apiKey: string;
@@ -260,58 +260,70 @@ async function callGeminiGenerateContent(params: {
   rawOcrText?: string;
   engineUsed?: 'gemini' | 'ocr_service' | 'hybrid';
 }): Promise<ExtractionResponse> {
-  const url = `${GEMINI_API_URL}/${params.model}:generateContent?key=${encodeURIComponent(params.apiKey)}`;
+  const modelsToTry = [
+    params.model,
+    'gemini-3.6-flash',
+    'gemini-1.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-pro'
+  ].filter((m, i, arr) => arr.indexOf(m) === i); // Unique models
 
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: params.parts
+  let lastError = '';
+
+  for (const currentModel of modelsToTry) {
+    const url = `${GEMINI_API_URL}/${currentModel}:generateContent?key=${encodeURIComponent(params.apiKey)}`;
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: params.parts
+            }
+          ],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.1
           }
-        ],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.1
-        }
-      })
-    });
+        })
+      });
 
-    const data = await response.json();
+      const data = await response.json();
 
-    if (!response.ok) {
+      if (!response.ok) {
+        lastError = data.error?.message || `Google Gemini API Error (${response.status}): ${response.statusText}`;
+        console.warn(`Model ${currentModel} failed: ${lastError}. Trying fallback model...`);
+        continue;
+      }
+
+      const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!candidateText) {
+        lastError = 'Google Gemini tidak mengembalikan teks respons.';
+        continue;
+      }
+
+      const parsedJson = parseGeminiJson(candidateText);
+      const event = normalizeCalendarEvent(parsedJson);
+
       return {
-        success: false,
-        error: data.error?.message || `Google Gemini API Error (${response.status}): ${response.statusText}`
+        success: true,
+        event,
+        rawOcrText: params.rawOcrText,
+        modelUsed: currentModel,
+        engineUsed: params.engineUsed || 'gemini'
       };
+    } catch (err: any) {
+      lastError = err.message;
+      console.warn(`Network error with model ${currentModel}: ${err.message}. Trying next...`);
     }
-
-    const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!candidateText) {
-      return {
-        success: false,
-        error: 'Google Gemini tidak mengembalikan teks respons.'
-      };
-    }
-
-    const parsedJson = parseGeminiJson(candidateText);
-    const event = normalizeCalendarEvent(parsedJson);
-
-    return {
-      success: true,
-      event,
-      rawOcrText: params.rawOcrText,
-      modelUsed: params.model,
-      engineUsed: params.engineUsed || 'gemini'
-    };
-  } catch (err: any) {
-    return {
-      success: false,
-      error: `Gagal memproses dengan Google Gemini: ${err.message}`
-    };
   }
+
+  return {
+    success: false,
+    error: `Gagal memproses dengan Google Gemini: ${lastError}`
+  };
 }

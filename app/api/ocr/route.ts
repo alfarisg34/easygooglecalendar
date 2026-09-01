@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
     let apiKey = req.headers.get('x-api-key') || '';
     let base64Data = '';
     let mimeType = 'application/pdf';
-    let model = 'gemini-2.5-flash';
+    let model = 'gemini-3.6-flash';
 
     if (contentType.includes('multipart/form-data')) {
       const formData = await req.formData();
