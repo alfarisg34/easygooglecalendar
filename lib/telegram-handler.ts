@@ -32,11 +32,27 @@ export async function sendTelegramMessage(params: {
     };
   }
 
-  await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(bodyPayload)
-  });
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(bodyPayload)
+    });
+    
+    if (!res.ok) {
+      const errText = await res.text();
+      console.warn('Telegram sendMessage Markdown failed, retrying plain text:', errText);
+      // Fallback: Retry without parse_mode if Markdown parsing failed
+      delete bodyPayload.parse_mode;
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyPayload)
+      });
+    }
+  } catch (err) {
+    console.error('Telegram sendMessage network error:', err);
+  }
 }
 
 /**
@@ -303,6 +319,27 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` untuk menghubungkan akun Google 
         text: `❌ Terjadi kesalahan saat memproses teks: ${err.message}`
       });
     }
+    return { ok: true };
+  } else if (text.length > 0) {
+    // Friendly response for short messages like 'halo', 'tes', 'hai'
+    const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
+    const userAuth = await getUserGoogleAuth(userId);
+    const isConnected = Boolean(userAuth && userAuth.email);
+
+    await sendTelegramMessage({
+      botToken,
+      chatId,
+      text: `👋 *Halo! Saya Bot Penjadwalan Agenda Google Calendar.*
+
+Silakan kirimkan:
+1. 📄 Berkas *Surat Dinas PDF* (\`.pdf\`)
+2. 🖼️ Berkas *Poster / Flyer Kegiatan* (JPG/PNG)
+3. 💬 Salinan teks lengkap undangan rapat
+
+📌 *Status Akun*: ${isConnected ? `✅ Terhubung (${userAuth?.email})` : '⚠️ Belum Terhubung'}
+💡 Ketik \`/help\` untuk melihat panduan lengkap atau \`/connect\` untuk menghubungkan kalender.`,
+      inlineButtons: !isConnected ? [{ text: '🔑 Hubungkan Google Calendar', url: authUrl }] : undefined
+    });
     return { ok: true };
   }
 
