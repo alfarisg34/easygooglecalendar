@@ -21,8 +21,31 @@ export interface UserRecord {
   updated_at?: string;
 }
 
+export interface ExtractedEventRecord {
+  id: string;
+  user_id: string;
+  title: string;
+  start_time: string;
+  end_time: string;
+  is_online?: boolean;
+  location?: string;
+  meeting_link?: string;
+  meeting_id_pass?: string;
+  jp?: string;
+  speakers?: string;
+  description?: string;
+  google_calendar_url?: string;
+  google_event_id?: string;
+  synced_to_calendar?: boolean;
+  source_type?: string; // 'pdf' | 'image' | 'text' | 'telegram'
+  file_name?: string;
+  created_at: string;
+}
+
 const LOCAL_STORE_FILE = path.join(process.cwd(), '.user_tokens.json');
+const LOCAL_EVENTS_FILE = path.join(process.cwd(), '.user_events.json');
 const memoryUserMap = new Map<string, UserRecord>();
+const memoryEventsList: ExtractedEventRecord[] = [];
 
 function getDatabaseUrl(): string | null {
   return (
@@ -68,14 +91,31 @@ export async function initDatabase(): Promise<boolean> {
       );
     `;
 
-    // Ensure all optional columns exist for seamless schema upgrades
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS gemini_api_key TEXT;`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_bot_token TEXT;`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_id TEXT;`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS calendar_id VARCHAR(255) DEFAULT 'primary';`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS ocr_engine VARCHAR(50) DEFAULT 'gemini';`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS ocr_service_url TEXT;`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS model_name VARCHAR(100) DEFAULT 'gemini-3.6-flash';`;
+    // Create extracted_events history table
+    await sql`
+      CREATE TABLE IF NOT EXISTS extracted_events (
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) NOT NULL,
+        title TEXT NOT NULL,
+        start_time TEXT NOT NULL,
+        end_time TEXT NOT NULL,
+        is_online BOOLEAN DEFAULT false,
+        location TEXT,
+        meeting_link TEXT,
+        meeting_id_pass TEXT,
+        jp TEXT,
+        speakers TEXT,
+        description TEXT,
+        google_calendar_url TEXT,
+        google_event_id TEXT,
+        synced_to_calendar BOOLEAN DEFAULT false,
+        source_type VARCHAR(50) DEFAULT 'web',
+        file_name TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `;
+
+    await sql`CREATE INDEX IF NOT EXISTS idx_extracted_events_user ON extracted_events(user_id, created_at DESC);`;
 
     dbInitialized = true;
     return true;
@@ -458,3 +498,205 @@ export async function getDbStatus(): Promise<{
     message: 'DATABASE_URL belum dikonfigurasi. Menggunakan penyimpanan lokal sementara.'
   };
 }
+
+// Fallback Local Events file store
+function getLocalEvents(): ExtractedEventRecord[] {
+  try {
+    if (fs.existsSync(LOCAL_EVENTS_FILE)) {
+      const data = fs.readFileSync(LOCAL_EVENTS_FILE, 'utf8');
+      return JSON.parse(data);
+    }
+  } catch (err) {}
+  return [];
+}
+
+function saveLocalEvents(data: ExtractedEventRecord[]) {
+  try {
+    fs.writeFileSync(LOCAL_EVENTS_FILE, JSON.stringify(data, null, 2), 'utf8');
+  } catch (err) {}
+}
+
+/**
+ * Saves an extracted event record into Neon PostgreSQL
+ */
+export async function saveExtractedEvent(
+  event: Omit<ExtractedEventRecord, 'id' | 'created_at'> & { id?: string }
+): Promise<ExtractedEventRecord> {
+  const eventId = event.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `evt_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`);
+  const now = new Date().toISOString();
+  const dbUrl = getDatabaseUrl();
+
+  const record: ExtractedEventRecord = {
+    id: eventId,
+    user_id: event.user_id,
+    title: event.title || 'Agenda Kegiatan / Rapat',
+    start_time: event.start_time,
+    end_time: event.end_time,
+    is_online: Boolean(event.is_online),
+    location: event.location || '',
+    meeting_link: event.meeting_link || '',
+    meeting_id_pass: event.meeting_id_pass || '',
+    jp: event.jp || '',
+    speakers: event.speakers || '',
+    description: event.description || '',
+    google_calendar_url: event.google_calendar_url || '',
+    google_event_id: event.google_event_id || '',
+    synced_to_calendar: Boolean(event.synced_to_calendar),
+    source_type: event.source_type || 'web',
+    file_name: event.file_name || '',
+    created_at: now
+  };
+
+  if (dbUrl) {
+    try {
+      await initDatabase();
+      const sql = neon(dbUrl);
+      const inserted = await sql`
+        INSERT INTO extracted_events (
+          id, user_id, title, start_time, end_time,
+          is_online, location, meeting_link, meeting_id_pass,
+          jp, speakers, description, google_calendar_url,
+          google_event_id, synced_to_calendar, source_type,
+          file_name, created_at
+        ) VALUES (
+          ${record.id}, ${record.user_id}, ${record.title}, ${record.start_time}, ${record.end_time},
+          ${record.is_online}, ${record.location}, ${record.meeting_link}, ${record.meeting_id_pass},
+          ${record.jp}, ${record.speakers}, ${record.description}, ${record.google_calendar_url},
+          ${record.google_event_id}, ${record.synced_to_calendar}, ${record.source_type},
+          ${record.file_name}, ${record.created_at}
+        )
+        RETURNING *;
+      `;
+      if (inserted && inserted.length > 0) {
+        return inserted[0] as ExtractedEventRecord;
+      }
+    } catch (err) {
+      console.error('Neon DB saveExtractedEvent error:', err);
+    }
+  }
+
+  // Fallback to local file / memory
+  const local = getLocalEvents();
+  local.unshift(record);
+  saveLocalEvents(local);
+  memoryEventsList.unshift(record);
+  return record;
+}
+
+/**
+ * Retrieves paginated extracted events for a user, sorted by created_at DESC
+ */
+export async function getUserExtractedEvents(params: {
+  userId: string;
+  email?: string;
+  telegramChatId?: string;
+  page?: number;
+  limit?: number;
+}): Promise<{
+  events: ExtractedEventRecord[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}> {
+  const page = Math.max(1, params.page || 1);
+  const limit = Math.max(1, Math.min(50, params.limit || 5));
+  const offset = (page - 1) * limit;
+
+  const dbUrl = getDatabaseUrl();
+  const rawTg = params.telegramChatId ? String(params.telegramChatId).replace('tg_', '') : '';
+  const tgId = `tg_${rawTg}`;
+  const userId = params.userId;
+  const userEmail = params.email || params.userId;
+
+  if (dbUrl) {
+    try {
+      await initDatabase();
+      const sql = neon(dbUrl);
+
+      // Count query
+      const countRes = await sql`
+        SELECT COUNT(*) as count FROM extracted_events
+        WHERE user_id = ${userId}
+           OR user_id = ${userEmail}
+           OR user_id = ${rawTg}
+           OR user_id = ${tgId}
+      `;
+      const total = countRes && countRes.length > 0 ? Number(countRes[0].count) : 0;
+
+      // Paginated items query sorted by created_at DESC
+      const rows = await sql`
+        SELECT * FROM extracted_events
+        WHERE user_id = ${userId}
+           OR user_id = ${userEmail}
+           OR user_id = ${rawTg}
+           OR user_id = ${tgId}
+        ORDER BY created_at DESC
+        LIMIT ${limit} OFFSET ${offset}
+      `;
+
+      return {
+        events: rows as ExtractedEventRecord[],
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit) || 1
+      };
+    } catch (err) {
+      console.error('Neon DB getUserExtractedEvents error:', err);
+    }
+  }
+
+  // Fallback to local
+  const local = getLocalEvents();
+  const filtered = local.filter(
+    e => e.user_id === userId || e.user_id === userEmail || (rawTg && (e.user_id === rawTg || e.user_id === tgId))
+  );
+  const total = filtered.length;
+  const sliced = filtered.slice(offset, offset + limit);
+
+  return {
+    events: sliced,
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit) || 1
+  };
+}
+
+/**
+ * Deletes an extracted event record
+ */
+export async function deleteExtractedEvent(params: {
+  userId: string;
+  email?: string;
+  eventId: string;
+}): Promise<boolean> {
+  const dbUrl = getDatabaseUrl();
+  const userId = params.userId;
+  const userEmail = params.email || params.userId;
+
+  if (dbUrl) {
+    try {
+      await initDatabase();
+      const sql = neon(dbUrl);
+      await sql`
+        DELETE FROM extracted_events
+        WHERE id = ${params.eventId}
+          AND (user_id = ${userId} OR user_id = ${userEmail})
+      `;
+      return true;
+    } catch (err) {
+      console.error('Neon DB deleteExtractedEvent error:', err);
+    }
+  }
+
+  // Fallback local
+  const local = getLocalEvents();
+  const updated = local.filter(
+    e => !(e.id === params.eventId && (e.user_id === userId || e.user_id === userEmail))
+  );
+  saveLocalEvents(updated);
+  return true;
+}
+

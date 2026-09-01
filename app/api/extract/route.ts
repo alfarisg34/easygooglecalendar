@@ -4,7 +4,7 @@ import { generateICSContent } from '@/lib/calendar-builder';
 import { insertGoogleCalendarEvent } from '@/lib/google-calendar-api';
 import { getUserGoogleAuth } from '@/lib/token-store';
 import { getSessionFromRequest } from '@/lib/auth-session';
-import { getUserById, getUserByEmail } from '@/lib/db';
+import { getUserById, getUserByEmail, saveExtractedEvent } from '@/lib/db';
 import { ExtractionRequest } from '@/lib/types';
 
 export const maxDuration = 60; // 60 seconds serverless timeout
@@ -137,10 +137,38 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Save to extracted_events history in Neon PostgreSQL
+    let savedRecord = null;
+    const targetUserId = session?.userId || dbUser?.id || session?.email || userId;
+    if (targetUserId) {
+      try {
+        savedRecord = await saveExtractedEvent({
+          user_id: targetUserId,
+          title: result.event.title,
+          start_time: result.event.start_time,
+          end_time: result.event.end_time,
+          is_online: result.event.is_online,
+          location: result.event.location,
+          meeting_link: result.event.meeting_link,
+          meeting_id_pass: result.event.meeting_id_pass,
+          jp: result.event.jp,
+          speakers: result.event.speakers,
+          description: result.event.description,
+          google_calendar_url: autoSyncResult?.htmlLink || result.event.google_calendar_url,
+          synced_to_calendar: Boolean(autoSyncResult?.synced),
+          source_type: extractionParams.sourceType || 'web',
+          file_name: extractionParams.fileName || (extractionParams.sourceType === 'text' ? 'Teks Undangan' : 'Dokumen')
+        });
+      } catch (err) {
+        console.error('Failed to save extracted event record:', err);
+      }
+    }
+
     return NextResponse.json({
       ...result,
       icsContent,
-      autoSyncResult
+      autoSyncResult,
+      savedRecord
     });
   } catch (err: any) {
     return NextResponse.json(

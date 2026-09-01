@@ -7,11 +7,32 @@ import {
   ExternalLink, Trash2, RefreshCw, Clock, MapPin, 
   Video, Users, BookOpen, AlertCircle, Send, CheckCircle2,
   LogOut, Shield, Database, Settings, ArrowRight, Eye, EyeOff,
-  CalendarCheck, Cpu
+  CalendarCheck, Cpu, ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { CalendarEvent } from '@/lib/types';
 import { DateTime } from 'luxon';
 import { buildGoogleCalendarUrl, generateICSContent } from '@/lib/calendar-builder';
+
+interface ExtractedEventItem {
+  id: string;
+  user_id: string;
+  title: string;
+  start_time: string;
+  end_time: string;
+  is_online?: boolean;
+  location?: string;
+  meeting_link?: string;
+  meeting_id_pass?: string;
+  jp?: string;
+  speakers?: string;
+  description?: string;
+  google_calendar_url?: string;
+  google_event_id?: string;
+  synced_to_calendar?: boolean;
+  source_type?: string; // 'pdf' | 'image' | 'text' | 'telegram'
+  file_name?: string;
+  created_at: string;
+}
 
 interface UserSession {
   id: string;
@@ -128,7 +149,60 @@ export default function HomePage() {
   // Telegram Webhook Setup State
   const [tgStatus, setTgStatus] = useState<{ loading: boolean; info?: string; error?: string }>({ loading: false });
 
+  // Events History (Paginated & Sorted by created_at DESC)
+  const [eventsList, setEventsList] = useState<ExtractedEventItem[]>([]);
+  const [eventsPage, setEventsPage] = useState<number>(1);
+  const [eventsLimit] = useState<number>(4);
+  const [eventsTotal, setEventsTotal] = useState<number>(0);
+  const [eventsTotalPages, setEventsTotalPages] = useState<number>(1);
+  const [eventsLoading, setEventsLoading] = useState<boolean>(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const fetchEventsHistory = async (page: number = 1) => {
+    try {
+      setEventsLoading(true);
+      const res = await fetch(`/api/events?page=${page}&limit=${eventsLimit}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setEventsList(data.events || []);
+          setEventsTotal(data.total || 0);
+          setEventsPage(data.page || 1);
+          setEventsTotalPages(data.totalPages || 1);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch events history:', err);
+    } finally {
+      setEventsLoading(false);
+    }
+  };
+
+  const handleDeleteHistoryEvent = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('Hapus riwayat agenda ini?')) return;
+    try {
+      const res = await fetch(`/api/events?id=${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchEventsHistory(eventsPage);
+      }
+    } catch (err) {
+      console.error('Failed to delete event:', err);
+    }
+  };
+
+  const handleDownloadSpecificICS = (event: ExtractedEventItem) => {
+    const icsString = generateICSContent(event as any);
+    const blob = new Blob([icsString], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${(event.title || 'agenda').replace(/[^a-zA-Z0-9]/g, '_')}.ics`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   // Check auth on load
   const fetchSession = async () => {
@@ -171,6 +245,12 @@ export default function HomePage() {
   useEffect(() => {
     fetchSession();
   }, []);
+
+  useEffect(() => {
+    if (user) {
+      fetchEventsHistory(1);
+    }
+  }, [user]);
 
   const handleLogout = async () => {
     if (!confirm('Apakah Anda yakin ingin keluar dari akun?')) return;
@@ -293,6 +373,7 @@ export default function HomePage() {
       if (data.autoSyncResult) {
         setAutoSyncResult(data.autoSyncResult);
       }
+      fetchEventsHistory(1);
     } catch (err: any) {
       setErrorMessage(err.message || 'Terjadi kesalahan sistem saat mengekstrak.');
     } finally {
@@ -835,184 +916,268 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* Extracted Calendar Output Column */}
+            {/* Extracted Calendar Output Column / Events History List */}
             <div className="chassis-card">
-              <div className="chassis-header">
+              <div className="chassis-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div className="chassis-title">
                   <Calendar size={14} color="var(--signal-green)" />
-                  <span>Hasil Agenda & Google Calendar</span>
+                  <span>Riwayat Agenda & Google Calendar</span>
                 </div>
-                {extractedEvent && (
-                  <span className="status-badge-tag badge-success">
-                    <CheckCircle2 size={12} />
-                    <span>Berhasil Diekstrak</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="status-badge-tag badge-online">
+                    <span>{eventsTotal} Agenda</span>
                   </span>
-                )}
+                  <button 
+                    onClick={() => fetchEventsHistory(eventsPage)}
+                    title="Muat Ulang Riwayat"
+                    className="btn-tactile"
+                    style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                  >
+                    <RefreshCw size={12} className={eventsLoading ? 'spin-anim' : ''} />
+                  </button>
+                </div>
               </div>
 
               <div className="chassis-body">
-                {extractedEvent ? (
-                  <div>
-                    {/* Auto Sync Notification Banner */}
-                    {autoSyncResult?.synced && (
-                      <div style={{ background: 'rgba(0, 255, 102, 0.1)', border: '1px solid rgba(0, 255, 102, 0.3)', padding: '0.85rem 1rem', borderRadius: 3, marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                          <CheckCircle2 size={16} color="var(--signal-green)" />
-                          <span style={{ fontSize: '0.8125rem', color: '#FFF' }}>
-                            Otomatis tersimpan ke Google Calendar <strong>({autoSyncResult.email})</strong>
-                          </span>
-                        </div>
-                        {autoSyncResult.htmlLink && (
-                          <a 
-                            href={autoSyncResult.htmlLink} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="btn-tactile btn-success"
-                            style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}
-                          >
-                            <ExternalLink size={12} />
-                            <span>Buka Event</span>
-                          </a>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Title */}
-                    <div style={{ marginBottom: '1.25rem' }}>
-                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--text-faint)', textTransform: 'uppercase', marginBottom: 4 }}>
-                        Nama Kegiatan / Agenda
-                      </div>
-                      <h2 style={{ fontSize: '1.3rem', fontWeight: 700, color: '#FFF', lineHeight: 1.3 }}>
-                        {extractedEvent.title}
-                      </h2>
+                {/* Auto Sync Notification Banner for Newly Extracted Item */}
+                {autoSyncResult?.synced && (
+                  <div style={{ background: 'rgba(0, 255, 102, 0.1)', border: '1px solid rgba(0, 255, 102, 0.3)', padding: '0.85rem 1rem', borderRadius: 3, marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                      <CheckCircle2 size={16} color="var(--signal-green)" />
+                      <span style={{ fontSize: '0.8125rem', color: '#FFF' }}>
+                        Agenda terbaru otomatis tersimpan ke Google Calendar <strong>({autoSyncResult.email})</strong>
+                      </span>
                     </div>
-
-                    {/* Matrix Grid */}
-                    <div className="matrix-grid" style={{ marginBottom: '1.25rem' }}>
-                      <div className="matrix-item">
-                        <div className="matrix-label">
-                          <Clock size={12} style={{ display: 'inline', marginRight: 4 }} />
-                          Waktu Mulai (WIB)
-                        </div>
-                        <div className="matrix-value">
-                          {DateTime.fromISO(extractedEvent.start_time).setZone('Asia/Jakarta').toFormat('dd MMM yyyy, HH:mm')} WIB
-                        </div>
-                      </div>
-
-                      <div className="matrix-item">
-                        <div className="matrix-label">
-                          <Clock size={12} style={{ display: 'inline', marginRight: 4 }} />
-                          Waktu Selesai (WIB)
-                        </div>
-                        <div className="matrix-value">
-                          {DateTime.fromISO(extractedEvent.end_time).setZone('Asia/Jakarta').toFormat('dd MMM yyyy, HH:mm')} WIB
-                        </div>
-                      </div>
-
-                      <div className="matrix-item">
-                        <div className="matrix-label">
-                          <MapPin size={12} style={{ display: 'inline', marginRight: 4 }} />
-                          Lokasi / Tempat
-                        </div>
-                        <div className="matrix-value">
-                          {extractedEvent.location || (extractedEvent.is_online ? 'Daring (Online Zoom/Meet)' : 'Tidak tercantum')}
-                        </div>
-                      </div>
-
-                      <div className="matrix-item">
-                        <div className="matrix-label">
-                          <BookOpen size={12} style={{ display: 'inline', marginRight: 4 }} />
-                          Bobot Sertifikat / JP
-                        </div>
-                        <div className="matrix-value">
-                          {extractedEvent.jp || '-'}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Online Meeting Credentials */}
-                    {extractedEvent.is_online && (extractedEvent.meeting_link || extractedEvent.meeting_id_pass) && (
-                      <div style={{ background: 'var(--bg-inset)', border: 'var(--border-chassis)', padding: '1rem', borderRadius: 3, marginBottom: '1.25rem' }}>
-                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--signal-blue)', fontWeight: 600, marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <Video size={14} />
-                          <span>AKSES VIRTUAL MEETING</span>
-                        </div>
-                        {extractedEvent.meeting_link && (
-                          <div style={{ marginBottom: 6, wordBreak: 'break-all', fontSize: '0.85rem' }}>
-                            <span style={{ color: 'var(--text-dim)' }}>Link: </span>
-                            <a href={extractedEvent.meeting_link} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--signal-blue)' }}>
-                              {extractedEvent.meeting_link}
-                            </a>
-                          </div>
-                        )}
-                        {extractedEvent.meeting_id_pass && (
-                          <div style={{ fontSize: '0.85rem', color: '#FFF' }}>
-                            <span style={{ color: 'var(--text-dim)' }}>Kredensial: </span>
-                            {extractedEvent.meeting_id_pass}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Speakers */}
-                    {extractedEvent.speakers && (
-                      <div style={{ marginBottom: '1.25rem' }}>
-                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--text-faint)', textTransform: 'uppercase', marginBottom: 4 }}>
-                          Narasumber / Keynote Speaker
-                        </div>
-                        <div style={{ fontSize: '0.875rem', color: 'var(--text-main)' }}>
-                          {extractedEvent.speakers}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Description */}
-                    {extractedEvent.description && (
-                      <div style={{ marginBottom: '1.5rem' }}>
-                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--text-faint)', textTransform: 'uppercase', marginBottom: 4 }}>
-                          Rincian Agenda
-                        </div>
-                        <div style={{ fontSize: '0.85rem', color: 'var(--text-dim)', whiteSpace: 'pre-wrap', lineHeight: 1.6, background: 'var(--bg-inset)', padding: '0.75rem', borderRadius: 3, border: 'var(--border-chassis)' }}>
-                          {extractedEvent.description}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Action Buttons */}
-                    <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    {autoSyncResult.htmlLink && (
                       <a 
-                        href={buildGoogleCalendarUrl(extractedEvent)}
-                        target="_blank"
+                        href={autoSyncResult.htmlLink} 
+                        target="_blank" 
                         rel="noopener noreferrer"
-                        className="btn-tactile btn-primary"
+                        className="btn-tactile btn-success"
+                        style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem', textDecoration: 'none' }}
                       >
-                        <Calendar size={14} />
-                        <span>Buka di Google Calendar</span>
+                        <ExternalLink size={12} />
+                        <span>Buka Event</span>
                       </a>
-
-                      <button onClick={handleDownloadICS} className="btn-tactile">
-                        <Download size={14} />
-                        <span>Unduh .ICS</span>
-                      </button>
-
-                      <button 
-                        onClick={() => handleCopyText(extractedEvent.title + '\n' + extractedEvent.description, 'agenda')}
-                        className="btn-tactile"
-                      >
-                        {copyFeedback === 'agenda' ? <Check size={14} color="var(--signal-green)" /> : <Copy size={14} />}
-                        <span>{copyFeedback === 'agenda' ? 'Disalin!' : 'Salin Teks'}</span>
-                      </button>
-                    </div>
+                    )}
                   </div>
-                ) : (
+                )}
+
+                {eventsLoading && eventsList.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '3.5rem 1.5rem', color: 'var(--text-dim)' }}>
+                    <span className="spinner-chassis" style={{ width: 28, height: 28, margin: '0 auto 1rem' }}></span>
+                    <div style={{ fontSize: '0.85rem' }}>Memuat riwayat agenda...</div>
+                  </div>
+                ) : eventsList.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '4rem 1.5rem', color: 'var(--text-faint)' }}>
                     <Calendar size={48} style={{ opacity: 0.3, margin: '0 auto 1rem' }} />
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--text-dim)', marginBottom: '0.5rem' }}>
                       BELUM ADA AGENDA DIEKSTRAK
                     </div>
-                    <p style={{ fontSize: '0.8125rem', maxWidth: 360, margin: '0 auto' }}>
-                      Unggah surat dinas PDF, poster flyer, atau masukkan teks undangan di sebelah kiri untuk melihat hasil ekstraksi dan sinkronisasi otomatis ke Google Calendar.
+                    <p style={{ fontSize: '0.8125rem', maxWidth: 360, margin: '0 auto', lineHeight: 1.6 }}>
+                      Unggah surat dinas PDF, poster flyer, atau kirimkan pesan ke <strong>Bot Telegram</strong> untuk melihat riwayat agenda tersinkronisasi otomatis di sini.
                     </p>
+                  </div>
+                ) : (
+                  <div>
+                    {/* List of Agenda Items */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                      {eventsList.map((item) => {
+                        const startDt = DateTime.fromISO(item.start_time).setZone('Asia/Jakarta');
+                        const endDt = DateTime.fromISO(item.end_time).setZone('Asia/Jakarta');
+                        const createdDt = DateTime.fromISO(item.created_at).setZone('Asia/Jakarta');
+
+                        return (
+                          <div 
+                            key={item.id}
+                            style={{
+                              background: 'var(--bg-inset)',
+                              border: '1px solid rgba(255, 255, 255, 0.08)',
+                              borderRadius: 4,
+                              padding: '1rem',
+                              transition: 'all 0.2s ease',
+                              position: 'relative'
+                            }}
+                          >
+                            {/* Meta Header Row */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem', flexWrap: 'wrap', gap: '0.4rem' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                {/* Source Tag Badge */}
+                                {item.source_type === 'telegram' ? (
+                                  <span className="status-badge-tag" style={{ background: 'rgba(0, 136, 204, 0.15)', color: '#0088cc', border: '1px solid rgba(0, 136, 204, 0.3)', fontSize: '0.7rem', padding: '0.15rem 0.45rem' }}>
+                                    <Bot size={11} />
+                                    <span>Telegram Bot</span>
+                                  </span>
+                                ) : item.source_type === 'pdf' ? (
+                                  <span className="status-badge-tag" style={{ background: 'rgba(255, 51, 75, 0.15)', color: 'var(--signal-red)', border: '1px solid rgba(255, 51, 75, 0.3)', fontSize: '0.7rem', padding: '0.15rem 0.45rem' }}>
+                                    <FileText size={11} />
+                                    <span>Surat PDF</span>
+                                  </span>
+                                ) : item.source_type === 'image' ? (
+                                  <span className="status-badge-tag" style={{ background: 'rgba(168, 85, 247, 0.15)', color: '#a855f7', border: '1px solid rgba(168, 85, 247, 0.3)', fontSize: '0.7rem', padding: '0.15rem 0.45rem' }}>
+                                    <Sparkles size={11} />
+                                    <span>Poster Flyer</span>
+                                  </span>
+                                ) : (
+                                  <span className="status-badge-tag" style={{ background: 'rgba(0, 255, 102, 0.15)', color: 'var(--signal-green)', border: '1px solid rgba(0, 255, 102, 0.3)', fontSize: '0.7rem', padding: '0.15rem 0.45rem' }}>
+                                    <MessageSquare size={11} />
+                                    <span>Teks Undangan</span>
+                                  </span>
+                                )}
+
+                                {/* Input Timestamp Badge */}
+                                <span style={{ fontSize: '0.72rem', color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>
+                                  Input: {createdDt.isValid ? createdDt.toFormat('dd MMM yyyy, HH:mm') : item.created_at} WIB
+                                </span>
+                              </div>
+
+                              {/* Delete Button */}
+                              <button 
+                                onClick={(e) => handleDeleteHistoryEvent(item.id, e)}
+                                title="Hapus dari riwayat"
+                                style={{ background: 'transparent', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '0.2rem', display: 'flex', alignItems: 'center', transition: 'color 0.2s' }}
+                                onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--signal-red)')}
+                                onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-faint)')}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+
+                            {/* Event Title */}
+                            <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#FFF', marginBottom: '0.6rem', lineHeight: 1.35 }}>
+                              {item.title}
+                            </h3>
+
+                            {/* Schedule & Venue Specs */}
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.45rem', fontSize: '0.8rem', color: 'var(--text-dim)', marginBottom: '0.75rem' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                <Clock size={13} color="var(--signal-amber)" />
+                                <span>
+                                  {startDt.isValid ? startDt.toFormat('dd MMM yyyy, HH:mm') : item.start_time} - {endDt.isValid ? endDt.toFormat('HH:mm') : item.end_time} WIB
+                                </span>
+                              </div>
+
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                <MapPin size={13} color="var(--signal-blue)" />
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {item.location || (item.is_online ? 'Daring (Zoom/Meet)' : 'Tidak tercantum')}
+                                </span>
+                              </div>
+
+                              {item.jp && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                  <BookOpen size={13} color="var(--signal-green)" />
+                                  <span>Bobot: <strong>{item.jp}</strong></span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Virtual Meeting Details if present */}
+                            {item.is_online && (item.meeting_link || item.meeting_id_pass) && (
+                              <div style={{ background: 'rgba(0, 102, 255, 0.08)', border: '1px solid rgba(0, 102, 255, 0.2)', padding: '0.5rem 0.75rem', borderRadius: 3, marginBottom: '0.75rem', fontSize: '0.78rem' }}>
+                                {item.meeting_link && (
+                                  <div style={{ wordBreak: 'break-all', marginBottom: item.meeting_id_pass ? 3 : 0 }}>
+                                    <span style={{ color: 'var(--text-faint)' }}>Link: </span>
+                                    <a href={item.meeting_link} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--signal-blue)' }}>
+                                      {item.meeting_link}
+                                    </a>
+                                  </div>
+                                )}
+                                {item.meeting_id_pass && (
+                                  <div style={{ color: '#FFF' }}>
+                                    <span style={{ color: 'var(--text-faint)' }}>Kredensial: </span>
+                                    {item.meeting_id_pass}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Speakers */}
+                            {item.speakers && (
+                              <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginBottom: '0.75rem' }}>
+                                <span style={{ color: 'var(--text-faint)', textTransform: 'uppercase', fontSize: '0.68rem', display: 'block', marginBottom: 2 }}>Narasumber / Keynote</span>
+                                {item.speakers}
+                              </div>
+                            )}
+
+                            {/* Action Buttons Row */}
+                            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', paddingTop: '0.5rem', borderTop: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                              <a 
+                                href={item.google_calendar_url || buildGoogleCalendarUrl(item as any)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="btn-tactile btn-primary"
+                                style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem', textDecoration: 'none' }}
+                              >
+                                <Calendar size={12} />
+                                <span>Buka di Google Calendar</span>
+                              </a>
+
+                              <button 
+                                onClick={() => handleDownloadSpecificICS(item)}
+                                className="btn-tactile"
+                                style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem' }}
+                              >
+                                <Download size={12} />
+                                <span>.ICS</span>
+                              </button>
+
+                              <button 
+                                onClick={() => handleCopyText(`${item.title}\nWaktu: ${startDt.isValid ? startDt.toFormat('dd MMM yyyy, HH:mm') : item.start_time} WIB\nLokasi: ${item.location || '-'}\n${item.description || ''}`, item.id)}
+                                className="btn-tactile"
+                                style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem' }}
+                              >
+                                {copyFeedback === item.id ? <Check size={12} color="var(--signal-green)" /> : <Copy size={12} />}
+                                <span>{copyFeedback === item.id ? 'Disalin!' : 'Salin'}</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Pagination Controls */}
+                    {eventsTotalPages > 1 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid rgba(255, 255, 255, 0.08)', flexWrap: 'wrap', gap: '0.75rem' }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>
+                          Halaman {eventsPage} dari {eventsTotalPages} ({eventsTotal} total)
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                          <button 
+                            onClick={() => fetchEventsHistory(eventsPage - 1)}
+                            disabled={eventsPage <= 1 || eventsLoading}
+                            className="btn-tactile"
+                            style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem' }}
+                          >
+                            <ChevronLeft size={13} />
+                            <span>Prev</span>
+                          </button>
+
+                          {Array.from({ length: eventsTotalPages }, (_, i) => i + 1).map((pg) => (
+                            <button
+                              key={pg}
+                              onClick={() => fetchEventsHistory(pg)}
+                              disabled={eventsLoading}
+                              className={`btn-tactile ${pg === eventsPage ? 'btn-primary' : ''}`}
+                              style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem', minWidth: 28, textAlign: 'center' }}
+                            >
+                              {pg}
+                            </button>
+                          ))}
+
+                          <button 
+                            onClick={() => fetchEventsHistory(eventsPage + 1)}
+                            disabled={eventsPage >= eventsTotalPages || eventsLoading}
+                            className="btn-tactile"
+                            style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem' }}
+                          >
+                            <span>Next</span>
+                            <ChevronRight size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

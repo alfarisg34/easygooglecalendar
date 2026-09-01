@@ -3,7 +3,7 @@ import { extractEventFromSource } from './gemini';
 import { DateTime } from 'luxon';
 import { getUserGoogleAuth, deleteUserGoogleAuth } from './token-store';
 import { insertGoogleCalendarEvent } from './google-calendar-api';
-import { getUserByTelegram, getBotAdminSettings, disconnectTelegramUser } from './db';
+import { getUserByTelegram, getBotAdminSettings, disconnectTelegramUser, saveExtractedEvent } from './db';
 
 const TELEGRAM_API_URL = 'https://api.telegram.org';
 
@@ -440,6 +440,29 @@ async function dispatchCalendarResult(params: {
     const targetUserId = userAuth.userId || userAuth.id || userId;
     const insertResult = await insertGoogleCalendarEvent(targetUserId, event, calendarId || 'primary');
 
+    // Save event history to Neon DB
+    try {
+      await saveExtractedEvent({
+        user_id: String(targetUserId),
+        title: event.title,
+        start_time: event.start_time,
+        end_time: event.end_time,
+        is_online: event.is_online,
+        location: event.location,
+        meeting_link: event.meeting_link,
+        meeting_id_pass: event.meeting_id_pass,
+        jp: event.jp,
+        speakers: event.speakers,
+        description: event.description,
+        google_calendar_url: insertResult.htmlLink || event.google_calendar_url,
+        synced_to_calendar: Boolean(insertResult.success),
+        source_type: 'telegram',
+        file_name: 'Telegram Bot'
+      });
+    } catch (e) {
+      console.error('Failed to save telegram event in Neon DB:', e);
+    }
+
     if (insertResult.success) {
       let replyText = `✅ *AGENDA OTOMATIS TERSIMPAN KE GOOGLE CALENDAR!* 📅\n\n` +
         `👤 *Kalender*: ${userAuth.email}\n` +
@@ -468,6 +491,25 @@ async function dispatchCalendarResult(params: {
   }
 
   // Case B: User has NOT connected Google Calendar yet (Fallback to 1-Click URL + Connect Link)
+  try {
+    await saveExtractedEvent({
+      user_id: `tg_${userId}`,
+      title: event.title,
+      start_time: event.start_time,
+      end_time: event.end_time,
+      is_online: event.is_online,
+      location: event.location,
+      meeting_link: event.meeting_link,
+      meeting_id_pass: event.meeting_id_pass,
+      jp: event.jp,
+      speakers: event.speakers,
+      description: event.description,
+      google_calendar_url: event.google_calendar_url,
+      synced_to_calendar: false,
+      source_type: 'telegram',
+      file_name: 'Telegram Bot'
+    });
+  } catch (e) {}
   const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
   let replyText = `📋 *Hasil Ekstraksi Agenda Kegiatan:*\n\n` +
     `📌 *Agenda*: ${event.title}\n` +
