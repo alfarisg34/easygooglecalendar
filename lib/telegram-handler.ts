@@ -57,6 +57,43 @@ export async function sendTelegramMessage(params: {
 }
 
 /**
+ * Sends a helpful and friendly tutorial on how to get and set a Google Gemini API Key
+ */
+export async function sendGeminiApiKeyMissingTutorial(params: {
+  botToken: string;
+  chatId: number;
+  hostOrigin: string;
+}) {
+  const { botToken, chatId, hostOrigin } = params;
+  const message = `⚠️ *Google Gemini API Key Belum Terpasang*
+
+Bot ini menggunakan kecerdasan buatan (*Google Gemini AI*) untuk memindai berkas surat dinas PDF, poster flyer, dan teks undangan secara otomatis.
+
+Untuk mulai menggunakan bot, silakan masukkan **Gemini API Key** Anda (100% Gratis dari Google):
+
+━━━━━━━━━━━━━━━━━━━━
+📖 *PANDUAN MENDAPATKAN API KEY (GRATIS):*
+1️⃣ Buka link resmi: [Google AI Studio](https://aistudio.google.com/app/apikey)
+2️⃣ Login menggunakan akun Google Anda.
+3️⃣ Klik tombol biru **"Create API key"** lalu pilih project baru/default.
+4️⃣ Salin (*Copy*) kunci API yang dihasilkan (diawali dengan \`AIzaSy...\`).
+5️⃣ Buka website EasyCal Anda: [${hostOrigin}](${hostOrigin}), masuk ke tab **Pengaturan & Kredensial**, tempel API Key Anda pada kolom *Google Gemini API Key*, lalu klik **Simpan Pengaturan**.
+━━━━━━━━━━━━━━━━━━━━
+
+💡 *Setelah API Key tersimpan di website, kirimkan kembali dokumen surat PDF atau poster flyer Anda ke bot ini!* 🚀`;
+
+  await sendTelegramMessage({
+    botToken,
+    chatId,
+    text: message,
+    inlineButtons: [
+      { text: '🔑 Buat API Key Gratis (AI Studio)', url: 'https://aistudio.google.com/app/apikey' },
+      { text: '⚙️ Buka Pengaturan EasyCal', url: hostOrigin }
+    ]
+  });
+}
+
+/**
  * Downloads a file from Telegram by file_id and returns its base64 buffer and mimeType
  */
 export async function downloadTelegramFile(params: {
@@ -200,19 +237,28 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` atau klik tombol di bawah untuk 
     return { ok: true };
   }
 
+  // Command: /apikey or /tutorial
+  if (cleanText.startsWith('/apikey') || cleanText.startsWith('/key') || cleanText.startsWith('/tutorial') || cleanText.startsWith('/panduan_api')) {
+    await sendGeminiApiKeyMissingTutorial({ botToken, chatId, hostOrigin });
+    return { ok: true };
+  }
+
   // Command: /help
   if (cleanText.startsWith('/help') || cleanText === 'help' || cleanText.startsWith('/bantuan')) {
     await sendTelegramMessage({
       botToken,
       chatId,
-      text: `📖 *PANDUAN & PERINTAH BOT*
+      text: `📖 *PANDUAN & PERINTAH BOT AGENDA*
 
 • \`/connect\` - Hubungkan akun Google Calendar pribadi Anda (0-Click Auto-Sync)
-• \`/status\` - Periksa akun Google yang terhubung
-• \`/disconnect\` - Putuskan akun Google Calendar
+• \`/status\` - Periksa status koneksi Google Calendar Anda
+• \`/apikey\` - Panduan langkah demi langkah memasang Google Gemini API Key
+• \`/disconnect\` - Putuskan akun Google Calendar dari bot ini
 • \`/help\` - Tampilkan bantuan ini
 
-*Kirimkan surat PDF, poster flyer, atau teks chat undangan kapan saja untuk menjadwalkan agenda!* ✨`
+━━━━━━━━━━━━━━━━━━━━
+💡 *CARA MENGGUNAKAN:*
+Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks Pesan Undangan* kapan saja ke bot ini. Jadwal akan otomatis diekstrak dan dijadwalkan ke Google Calendar Anda! ✨`
     });
     return { ok: true };
   }
@@ -231,12 +277,8 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` atau klik tombol di bawah untuk 
       return { ok: true };
     }
 
-    if (!geminiKey && !process.env.GEMINI_API_KEY) {
-      await sendTelegramMessage({
-        botToken,
-        chatId,
-        text: `⚠️ *Google Gemini API Key Belum Dikonfigurasi*\n\nBot membutuhkan API Key Gemini untuk membaca berkas. Silakan pasang \`GEMINI_API_KEY\` di Vercel Environment Variables atau masukkan Gemini API Key di website EasyCal sebelum menyetel webhook.`
-      });
+    if (!effectiveGeminiKey) {
+      await sendGeminiApiKeyMissingTutorial({ botToken, chatId, hostOrigin });
       return { ok: true };
     }
 
@@ -249,7 +291,7 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` atau klik tombol di bawah untuk 
     try {
       const { base64Data, mimeType } = await downloadTelegramFile({ botToken, fileId: doc.file_id });
       const result = await extractEventFromSource({
-        apiKey: geminiKey,
+        apiKey: effectiveGeminiKey,
         sourceType: 'pdf',
         base64Data,
         mimeType
@@ -286,11 +328,7 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` atau klik tombol di bawah untuk 
   // Process Photo / Poster
   if (msg.photo && msg.photo.length > 0) {
     if (!effectiveGeminiKey) {
-      await sendTelegramMessage({
-        botToken,
-        chatId,
-        text: `⚠️ *Google Gemini API Key Belum Dikonfigurasi*\n\nBot membutuhkan API Key Gemini untuk membaca poster. Silakan pasang \`GEMINI_API_KEY\` di Vercel Environment Variables atau masukkan Gemini API Key di website EasyCal.`
-      });
+      await sendGeminiApiKeyMissingTutorial({ botToken, chatId, hostOrigin });
       return { ok: true };
     }
 
@@ -342,11 +380,7 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` atau klik tombol di bawah untuk 
   // Process Text Chat
   if (text.length >= 20) {
     if (!effectiveGeminiKey) {
-      await sendTelegramMessage({
-        botToken,
-        chatId,
-        text: `⚠️ *Google Gemini API Key Belum Dikonfigurasi*\n\nBot membutuhkan API Key Gemini untuk membaca teks undangan. Silakan pasang \`GEMINI_API_KEY\` di Vercel Environment Variables atau masukkan Gemini API Key di website EasyCal.`
-      });
+      await sendGeminiApiKeyMissingTutorial({ botToken, chatId, hostOrigin });
       return { ok: true };
     }
 
