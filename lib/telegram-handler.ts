@@ -3,7 +3,7 @@ import { extractEventFromSource } from './gemini';
 import { DateTime } from 'luxon';
 import { getUserGoogleAuth, deleteUserGoogleAuth } from './token-store';
 import { insertGoogleCalendarEvent } from './google-calendar-api';
-import { getUserByTelegram } from './db';
+import { getUserByTelegram, getBotAdminSettings, disconnectTelegramUser } from './db';
 
 const TELEGRAM_API_URL = 'https://api.telegram.org';
 
@@ -109,8 +109,8 @@ export async function handleTelegramWebhook(
   const text = (msg.text || msg.caption || '').trim();
   const cleanText = text.toLowerCase();
 
-  // Resolve user identity from Neon DB & Token Store
-  const dbUser = await getUserByTelegram({ tgUserId: userId, botToken });
+  // 1. Resolve this specific Telegram user's Google Calendar from Neon DB & Token Store (Method B: Personal State Binding)
+  const dbUser = await getUserByTelegram({ tgUserId: userId });
   const rawAuth = await getUserGoogleAuth(userId);
   const userAuth = rawAuth || (dbUser?.google_refresh_token ? {
     userId: dbUser.id,
@@ -123,7 +123,9 @@ export async function handleTelegramWebhook(
     updatedAt: dbUser.updated_at || new Date().toISOString()
   } : null);
 
-  const effectiveGeminiKey = geminiKey || dbUser?.gemini_api_key || process.env.GEMINI_API_KEY || '';
+  // 2. Resolve AI key: user's personal key -> bot owner key -> global GEMINI_API_KEY
+  const botAdmin = await getBotAdminSettings(botToken);
+  const effectiveGeminiKey = geminiKey || dbUser?.gemini_api_key || botAdmin?.gemini_api_key || process.env.GEMINI_API_KEY || '';
 
   // Command: /connect or /login
   if (cleanText.startsWith('/connect') || cleanText.startsWith('/login') || cleanText.startsWith('/auth')) {
@@ -164,10 +166,11 @@ export async function handleTelegramWebhook(
   // Command: /disconnect or /logout
   if (cleanText.startsWith('/disconnect') || cleanText.startsWith('/logout')) {
     await deleteUserGoogleAuth(userId);
+    await disconnectTelegramUser(userId);
     await sendTelegramMessage({
       botToken,
       chatId,
-      text: `🔌 *Koneksi Google Calendar Berhasil Diputus*\n\nAnda dapat menghubungkan kembali akun Google Anda kapan saja dengan mengetik \`/connect\`.`
+      text: `🔌 *Koneksi Google Calendar Berhasil Diputus*\n\nAkun Google Calendar Anda telah diputus dari bot ini. Anda dapat menghubungkan kembali kapan saja dengan mengetik \`/connect\`.`
     });
     return { ok: true };
   }

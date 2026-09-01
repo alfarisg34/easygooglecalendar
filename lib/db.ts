@@ -141,46 +141,31 @@ export async function getUserById(id: string): Promise<UserRecord | null> {
 }
 
 /**
- * Retrieves a user by Telegram User/Chat ID or Bot Token
+ * Retrieves a user strictly by their Telegram User/Chat ID (Method B: Personal State Binding)
  */
 export async function getUserByTelegram(params: {
-  tgUserId?: string | number;
-  botToken?: string;
+  tgUserId: string | number;
 }): Promise<UserRecord | null> {
   const dbUrl = getDatabaseUrl();
-  const rawId = params.tgUserId ? String(params.tgUserId).replace('tg_', '') : '';
+  const rawId = String(params.tgUserId).replace('tg_', '');
   const tgId = `tg_${rawId}`;
 
-  if (dbUrl) {
+  if (dbUrl && rawId) {
     try {
       await initDatabase();
       const sql = neon(dbUrl);
 
-      // 1. Search by exact telegram_chat_id or id
-      if (rawId) {
-        const rows = await sql`
-          SELECT * FROM users 
-          WHERE telegram_chat_id = ${rawId} 
-             OR telegram_chat_id = ${tgId}
-             OR id = ${rawId}
-             OR id = ${tgId}
-          LIMIT 1
-        `;
-        if (rows && rows.length > 0 && rows[0].google_refresh_token) {
-          return rows[0] as UserRecord;
-        }
-      }
-
-      // 2. Search by bot_token if provided
-      if (params.botToken) {
-        const rows = await sql`
-          SELECT * FROM users 
-          WHERE telegram_bot_token = ${params.botToken}
-          LIMIT 1
-        `;
-        if (rows && rows.length > 0 && rows[0].google_refresh_token) {
-          return rows[0] as UserRecord;
-        }
+      // Search exclusively for the account linked to this specific Telegram User ID
+      const rows = await sql`
+        SELECT * FROM users 
+        WHERE telegram_chat_id = ${rawId} 
+           OR telegram_chat_id = ${tgId}
+           OR id = ${rawId}
+           OR id = ${tgId}
+        LIMIT 1
+      `;
+      if (rows && rows.length > 0 && rows[0].google_refresh_token) {
+        return rows[0] as UserRecord;
       }
     } catch (err) {
       console.error('Neon DB getUserByTelegram error:', err);
@@ -194,6 +179,57 @@ export async function getUserByTelegram(params: {
   }
 
   return null;
+}
+
+/**
+ * Retrieves the Bot Owner / Admin settings by Bot Token for AI key fallback
+ */
+export async function getBotAdminSettings(botToken?: string): Promise<UserRecord | null> {
+  const dbUrl = getDatabaseUrl();
+  if (dbUrl && botToken) {
+    try {
+      await initDatabase();
+      const sql = neon(dbUrl);
+      const rows = await sql`
+        SELECT * FROM users 
+        WHERE telegram_bot_token = ${botToken} 
+        LIMIT 1
+      `;
+      if (rows && rows.length > 0) return rows[0] as UserRecord;
+    } catch (err) {
+      console.error('Neon DB getBotAdminSettings error:', err);
+    }
+  }
+  return null;
+}
+
+/**
+ * Disconnects a specific Telegram User from their linked Google Account
+ */
+export async function disconnectTelegramUser(tgUserId: string | number): Promise<boolean> {
+  const rawId = String(tgUserId).replace('tg_', '');
+  const tgId = `tg_${rawId}`;
+  const dbUrl = getDatabaseUrl();
+
+  if (dbUrl && rawId) {
+    try {
+      await initDatabase();
+      const sql = neon(dbUrl);
+      await sql`
+        UPDATE users 
+        SET telegram_chat_id = NULL 
+        WHERE telegram_chat_id = ${rawId} 
+           OR telegram_chat_id = ${tgId}
+           OR id = ${rawId}
+           OR id = ${tgId}
+      `;
+      return true;
+    } catch (err) {
+      console.error('Neon DB disconnectTelegramUser error:', err);
+    }
+  }
+
+  return false;
 }
 
 /**
