@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
     const geminiKey = searchParams.get('gemini_key') || searchParams.get('key') || process.env.GEMINI_API_KEY;
 
     if (!botToken) {
-      // Return 200 to Telegram so it doesn't repeatedly retry failing webhooks
+      // Always return 200 to Telegram so it doesn't repeatedly retry failing webhooks
       return NextResponse.json({
         ok: false,
         error: 'Parameter bot_token diperlukan di URL webhook (?bot_token=...)'
@@ -28,7 +28,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   } catch (err: any) {
     console.error('Telegram Webhook error:', err);
-    // Always return 200 OK to Telegram webhook
     return NextResponse.json({ ok: false, error: err.message });
   }
 }
@@ -37,6 +36,6 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     status: 'online',
     service: 'EasyGoogleCalendar Telegram Bot Webhook Endpoint',
-    instruction: 'Set your Telegram webhook to POST https://<your-vercel-domain>/api/telegram/webhook?bot_token=YOUR_BOT_TOKEN&gemini_key=YOUR_GEMINI_KEY'
+    instruction: 'Set your Telegram webhook to POST https://<your-domain>/api/telegram?bot_token=YOUR_BOT_TOKEN'
   });
 }

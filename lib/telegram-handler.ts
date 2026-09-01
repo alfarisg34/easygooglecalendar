@@ -109,7 +109,7 @@ export async function handleTelegramWebhook(
   const cleanText = text.toLowerCase();
 
   // Command: /connect or /login
-  if (cleanText === '/connect' || cleanText === '/login' || cleanText === '/auth') {
+  if (cleanText.startsWith('/connect') || cleanText.startsWith('/login') || cleanText.startsWith('/auth')) {
     const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
     await sendTelegramMessage({
       botToken,
@@ -123,7 +123,7 @@ export async function handleTelegramWebhook(
   }
 
   // Command: /status
-  if (cleanText === '/status' || cleanText === '/cek') {
+  if (cleanText.startsWith('/status') || cleanText.startsWith('/cek')) {
     const userAuth = await getUserGoogleAuth(userId);
     if (userAuth && userAuth.email) {
       await sendTelegramMessage({
@@ -146,7 +146,7 @@ export async function handleTelegramWebhook(
   }
 
   // Command: /disconnect or /logout
-  if (cleanText === '/disconnect' || cleanText === '/logout') {
+  if (cleanText.startsWith('/disconnect') || cleanText.startsWith('/logout')) {
     await deleteUserGoogleAuth(userId);
     await sendTelegramMessage({
       botToken,
@@ -157,7 +157,7 @@ export async function handleTelegramWebhook(
   }
 
   // Command: /start
-  if (cleanText === '/start' || cleanText === 'start' || cleanText === 'halo' || cleanText === 'hai') {
+  if (cleanText.startsWith('/start') || cleanText === 'start' || cleanText === 'halo' || cleanText === 'hai') {
     const userAuth = await getUserGoogleAuth(userId);
     const isConnected = Boolean(userAuth && userAuth.email);
     const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
@@ -183,7 +183,7 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` untuk menghubungkan akun Google 
   }
 
   // Command: /help
-  if (cleanText === '/help' || cleanText === 'help' || cleanText === '/bantuan') {
+  if (cleanText.startsWith('/help') || cleanText === 'help' || cleanText.startsWith('/bantuan')) {
     await sendTelegramMessage({
       botToken,
       chatId,

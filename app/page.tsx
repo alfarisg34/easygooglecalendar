@@ -323,17 +323,67 @@ export default function HomePage() {
   const handleSetupTelegramWebhook = async () => {
     if (!settingsForm.telegramBotToken.trim()) {
       alert('Mohon isi Telegram Bot Token terlebih dahulu di form Pengaturan.');
+      setActiveView('settings');
       return;
     }
-    setTgStatus({ loading: true });
+    setTgStatus({ loading: true, info: undefined, error: undefined });
     try {
-      const webhookUrl = `${window.location.origin}/api/telegram`;
-      const res = await fetch(`https://api.telegram.org/bot${settingsForm.telegramBotToken.trim()}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
+      const cleanToken = settingsForm.telegramBotToken.trim();
+      const origin = window.location.origin;
+      const webhookUrl = `${origin}/api/telegram?bot_token=${encodeURIComponent(cleanToken)}${settingsForm.geminiApiKey ? `&gemini_key=${encodeURIComponent(settingsForm.geminiApiKey.trim())}` : ''}`;
+
+      const res = await fetch('/api/telegram/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          botToken: cleanToken,
+          webhookUrl,
+          action: 'set_webhook'
+        })
+      });
       const data = await res.json();
       if (data.ok) {
-        setTgStatus({ loading: false, info: `✅ Webhook Telegram berhasil dipasang ke:\n${webhookUrl}` });
+        setTgStatus({ 
+          loading: false, 
+          info: `🎉 Webhook Telegram Berhasil Dipasang!\n\n🔗 URL: ${webhookUrl}\n\nSekarang buka bot Telegram Anda dan ketik /start untuk mulai menggunakan!` 
+        });
       } else {
-        setTgStatus({ loading: false, error: `Gagal: ${data.description || 'Token tidak valid'}` });
+        setTgStatus({ 
+          loading: false, 
+          error: `Gagal menyetel webhook: ${data.description || data.error || 'Token tidak valid'}` 
+        });
+      }
+    } catch (e: any) {
+      setTgStatus({ loading: false, error: e.message });
+    }
+  };
+
+  const handleCheckTelegramWebhook = async () => {
+    if (!settingsForm.telegramBotToken.trim()) {
+      alert('Mohon isi Telegram Bot Token terlebih dahulu di form Pengaturan.');
+      setActiveView('settings');
+      return;
+    }
+    setTgStatus({ loading: true, info: undefined, error: undefined });
+    try {
+      const cleanToken = settingsForm.telegramBotToken.trim();
+      const res = await fetch('/api/telegram/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          botToken: cleanToken,
+          action: 'get_webhook_info'
+        })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        const info = data.result;
+        setTgStatus({
+          loading: false,
+          info: `📡 Status Webhook Telegram Saat Ini:\n\n• URL: ${info.url || '(Belum disetel / Kosong)'}\n• Pending Updates: ${info.pending_update_count}\n• Last Error: ${info.last_error_message || 'Tidak ada error (OK)'}`
+        });
+      } else {
+        setTgStatus({ loading: false, error: data.description || 'Gagal memeriksa status webhook.' });
       }
     } catch (e: any) {
       setTgStatus({ loading: false, error: e.message });
@@ -1189,6 +1239,15 @@ export default function HomePage() {
                 >
                   {tgStatus.loading ? <span className="spinner-chassis"></span> : <Send size={14} />}
                   <span>Pasang Webhook Otomatis</span>
+                </button>
+
+                <button 
+                  onClick={handleCheckTelegramWebhook}
+                  disabled={tgStatus.loading}
+                  className="btn-tactile"
+                >
+                  <RefreshCw size={14} />
+                  <span>Periksa Status Webhook</span>
                 </button>
               </div>
             </div>
