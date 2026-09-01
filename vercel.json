@@ -1,0 +1,9 @@
+{
+  "framework": "nextjs",
+  "functions": {
+    "app/api/**/*": {
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  }
+}
