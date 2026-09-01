@@ -778,141 +778,196 @@ export default function HomePage() {
               </div>
 
               <div className="chassis-body">
-                {/* Media Type Switcher */}
-                <div className="tab-switcher">
-                  <button 
-                    type="button"
-                    onClick={() => { setInputTab('pdf'); setSelectedFile(null); }}
-                    className={`tab-btn ${inputTab === 'pdf' ? 'active' : ''}`}
-                  >
-                    <FileText size={14} />
-                    <span>Surat Dinas (PDF)</span>
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => { setInputTab('image'); setSelectedFile(null); }}
-                    className={`tab-btn ${inputTab === 'image' ? 'active' : ''}`}
-                  >
-                    <ImageIcon size={14} />
-                    <span>Poster (Gambar)</span>
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => setInputTab('text')}
-                    className={`tab-btn ${inputTab === 'text' ? 'active' : ''}`}
-                  >
-                    <MessageSquare size={14} />
-                    <span>Teks / Broadcast</span>
-                  </button>
-                </div>
+                {!settingsForm.geminiApiKey ? (
+                  /* LOCKED STATE: User hasn't configured Gemini API Key */
+                  <div style={{ padding: '2rem 1.25rem', textAlign: 'center', background: 'rgba(255, 158, 11, 0.03)', border: '1px dashed rgba(255, 158, 11, 0.3)', borderRadius: 4 }}>
+                    <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'rgba(255, 158, 11, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.25rem', border: '1px solid rgba(255, 158, 11, 0.3)' }}>
+                      <Key size={24} color="var(--signal-amber)" />
+                    </div>
 
-                {/* File Dropzone for PDF / Image */}
-                {inputTab !== 'text' ? (
-                  <div>
-                    <input 
-                      type="file" 
-                      ref={fileInputRef} 
-                      onChange={handleFileSelect} 
-                      accept={inputTab === 'pdf' ? '.pdf,application/pdf' : '.jpg,.jpeg,.png,.webp,image/*'}
-                      style={{ display: 'none' }} 
-                    />
-                    
-                    <div 
-                      className={`dropzone ${isDragging ? 'dragging' : ''}`}
-                      onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-                      onDragLeave={() => setIsDragging(false)}
-                      onDrop={handleFileDrop}
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      {selectedFile ? (
-                        <div>
-                          <CheckCircle2 size={36} color="var(--signal-green)" style={{ margin: '0 auto 0.75rem' }} />
-                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', fontWeight: 600, color: '#FFF' }}>
-                            {selectedFile.name}
-                          </div>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: 4 }}>
-                            {(selectedFile.size / 1024).toFixed(1)} KB &bull; Klik untuk mengganti berkas
-                          </div>
-                        </div>
-                      ) : (
-                        <div>
-                          <div className="dropzone-icon">
-                            {inputTab === 'pdf' ? <FileText size={36} /> : <ImageIcon size={36} />}
-                          </div>
-                          <div style={{ fontWeight: 600, color: '#FFF', marginBottom: 4 }}>
-                            Tarik berkas {inputTab === 'pdf' ? 'PDF Surat Dinas' : 'Poster Flyer'} ke sini
-                          </div>
-                          <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
-                            atau klik untuk memilih dari komputer Anda (Maksimal 10MB)
-                          </div>
-                        </div>
-                      )}
+                    <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#FFF', marginBottom: '0.6rem' }}>
+                      Google Gemini API Key Diperlukan
+                    </h3>
+
+                    <p style={{ fontSize: '0.85rem', color: 'var(--text-dim)', maxWidth: 420, margin: '0 auto 1.5rem', lineHeight: 1.6 }}>
+                      Untuk memindai berkas surat dinas PDF, poster flyer, dan teks undangan menggunakan AI Google Gemini, Anda perlu memasukkan <strong>Gemini API Key</strong> pribadi terlebih dahulu (100% Gratis dari Google).
+                    </p>
+
+                    {/* Step by Step Mini Tutorial */}
+                    <div style={{ textAlign: 'left', background: 'var(--bg-inset)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: 4, padding: '1rem 1.25rem', marginBottom: '1.5rem', fontSize: '0.8125rem' }}>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--signal-amber)', fontWeight: 600, textTransform: 'uppercase', marginBottom: '0.6rem' }}>
+                        📖 Panduan Langkah Cepat (Gratis):
+                      </div>
+                      <ol style={{ paddingLeft: '1.25rem', margin: 0, color: 'var(--text-main)', lineHeight: 1.75 }}>
+                        <li>Buka tautan resmi: <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--signal-blue)', textDecoration: 'underline' }}>Google AI Studio (aistudio.google.com)</a>.</li>
+                        <li>Login dengan akun Google Anda dan klik tombol biru <strong>"Create API key"</strong>.</li>
+                        <li>Salin kunci API yang dihasilkan (diawali dengan <code>AIzaSy...</code>).</li>
+                        <li>Masuk ke tab <strong>Pengaturan & Kredensial</strong> di EasyCal, tempelkan kunci Anda, lalu klik <strong>Simpan Pengaturan</strong>.</li>
+                      </ol>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                      <button 
+                        onClick={() => setActiveView('settings')}
+                        className="btn-tactile btn-primary"
+                        style={{ padding: '0.65rem 1.2rem', fontSize: '0.85rem' }}
+                      >
+                        <Settings size={15} />
+                        <span>Buka Pengaturan & Masukkan API Key</span>
+                      </button>
+
+                      <a 
+                        href="https://aistudio.google.com/app/apikey" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="btn-tactile"
+                        style={{ padding: '0.65rem 1.2rem', fontSize: '0.85rem', textDecoration: 'none' }}
+                      >
+                        <ExternalLink size={15} />
+                        <span>Buat Kunci di AI Studio ↗</span>
+                      </a>
                     </div>
                   </div>
                 ) : (
+                  /* UNLOCKED STATE: Gemini API Key is ready */
                   <div>
-                    {/* Text Input Area */}
-                    <div className="form-group">
-                      <div className="form-label">
-                        <span>Pesan Chat / Broadcast Undangan</span>
-                        <div style={{ display: 'flex', gap: '0.5rem' }}>
-                          <button 
-                            type="button" 
-                            onClick={() => setInputText(SAMPLE_TEXT_LETTER)} 
-                            style={{ background: 'none', border: 'none', color: 'var(--signal-amber)', fontFamily: 'var(--font-mono)', fontSize: '0.7rem', cursor: 'pointer' }}
-                          >
-                            Contoh Surat
-                          </button>
-                          <button 
-                            type="button" 
-                            onClick={() => setInputText(SAMPLE_TEXT_POSTER)} 
-                            style={{ background: 'none', border: 'none', color: 'var(--signal-amber)', fontFamily: 'var(--font-mono)', fontSize: '0.7rem', cursor: 'pointer' }}
-                          >
-                            Contoh Poster
-                          </button>
+                    {/* Media Type Switcher */}
+                    <div className="tab-switcher">
+                      <button 
+                        type="button"
+                        onClick={() => { setInputTab('pdf'); setSelectedFile(null); }}
+                        className={`tab-btn ${inputTab === 'pdf' ? 'active' : ''}`}
+                      >
+                        <FileText size={14} />
+                        <span>Surat Dinas (PDF)</span>
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => { setInputTab('image'); setSelectedFile(null); }}
+                        className={`tab-btn ${inputTab === 'image' ? 'active' : ''}`}
+                      >
+                        <ImageIcon size={14} />
+                        <span>Poster (Gambar)</span>
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => setInputTab('text')}
+                        className={`tab-btn ${inputTab === 'text' ? 'active' : ''}`}
+                      >
+                        <MessageSquare size={14} />
+                        <span>Teks / Broadcast</span>
+                      </button>
+                    </div>
+
+                    {/* File Dropzone for PDF / Image */}
+                    {inputTab !== 'text' ? (
+                      <div>
+                        <input 
+                          type="file" 
+                          ref={fileInputRef} 
+                          onChange={handleFileSelect} 
+                          accept={inputTab === 'pdf' ? '.pdf,application/pdf' : '.jpg,.jpeg,.png,.webp,image/*'}
+                          style={{ display: 'none' }} 
+                        />
+                        
+                        <div 
+                          className={`dropzone ${isDragging ? 'dragging' : ''}`}
+                          onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                          onDragLeave={() => setIsDragging(false)}
+                          onDrop={handleFileDrop}
+                          onClick={() => fileInputRef.current?.click()}
+                        >
+                          {selectedFile ? (
+                            <div>
+                              <CheckCircle2 size={36} color="var(--signal-green)" style={{ margin: '0 auto 0.75rem' }} />
+                              <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', fontWeight: 600, color: '#FFF' }}>
+                                {selectedFile.name}
+                              </div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: 4 }}>
+                                {(selectedFile.size / 1024).toFixed(1)} KB &bull; Klik untuk mengganti berkas
+                              </div>
+                            </div>
+                          ) : (
+                            <div>
+                              <div className="dropzone-icon">
+                                {inputTab === 'pdf' ? <FileText size={36} /> : <ImageIcon size={36} />}
+                              </div>
+                              <div style={{ fontWeight: 600, color: '#FFF', marginBottom: 4 }}>
+                                Tarik berkas {inputTab === 'pdf' ? 'PDF Surat Dinas' : 'Poster Flyer'} ke sini
+                              </div>
+                              <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
+                                atau klik untuk memilih dari komputer Anda (Maksimal 10MB)
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
-                      <textarea 
-                        className="form-control"
-                        rows={10}
-                        value={inputText}
-                        onChange={(e) => setInputText(e.target.value)}
-                        placeholder="Tempelkan isi surat dinas, flyer kegiatan, atau broadcast pesan WhatsApp di sini..."
-                        style={{ resize: 'vertical' }}
-                      />
+                    ) : (
+                      <div>
+                        {/* Text Input Area */}
+                        <div className="form-group">
+                          <div className="form-label">
+                            <span>Pesan Chat / Broadcast Undangan</span>
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                              <button 
+                                type="button" 
+                                onClick={() => setInputText(SAMPLE_TEXT_LETTER)} 
+                                style={{ background: 'none', border: 'none', color: 'var(--signal-amber)', fontFamily: 'var(--font-mono)', fontSize: '0.7rem', cursor: 'pointer' }}
+                              >
+                                Contoh Surat
+                              </button>
+                              <button 
+                                type="button" 
+                                onClick={() => setInputText(SAMPLE_TEXT_POSTER)} 
+                                style={{ background: 'none', border: 'none', color: 'var(--signal-amber)', fontFamily: 'var(--font-mono)', fontSize: '0.7rem', cursor: 'pointer' }}
+                              >
+                                Contoh Poster
+                              </button>
+                            </div>
+                          </div>
+                          <textarea 
+                            className="form-control"
+                            rows={10}
+                            value={inputText}
+                            onChange={(e) => setInputText(e.target.value)}
+                            placeholder="Tempelkan isi surat dinas, flyer kegiatan, atau broadcast pesan WhatsApp di sini..."
+                            style={{ resize: 'vertical' }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Error Banner */}
+                    {errorMessage && (
+                      <div style={{ marginTop: '1rem', background: 'rgba(255, 51, 75, 0.1)', border: '1px solid rgba(255, 51, 75, 0.3)', padding: '0.85rem 1rem', borderRadius: 3, display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--signal-red)', fontSize: '0.8125rem' }}>
+                        <AlertCircle size={16} />
+                        <span>{errorMessage}</span>
+                      </div>
+                    )}
+
+                    {/* Extract Action Button */}
+                    <div style={{ marginTop: '1.5rem' }}>
+                      <button 
+                        onClick={handleExtract}
+                        disabled={isLoading}
+                        className="btn-tactile btn-primary"
+                        style={{ width: '100%', padding: '0.85rem 1rem', fontSize: '0.9rem' }}
+                      >
+                        {isLoading ? (
+                          <>
+                            <span className="spinner-chassis"></span>
+                            <span>{statusMessage || 'Mengekstrak Agenda...'}</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles size={16} />
+                            <span>Mulai Ekstraksi AI & Jadwalkan</span>
+                          </>
+                        )}
+                      </button>
                     </div>
                   </div>
                 )}
-
-                {/* Error Banner */}
-                {errorMessage && (
-                  <div style={{ marginTop: '1rem', background: 'rgba(255, 51, 75, 0.1)', border: '1px solid rgba(255, 51, 75, 0.3)', padding: '0.85rem 1rem', borderRadius: 3, display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--signal-red)', fontSize: '0.8125rem' }}>
-                    <AlertCircle size={16} />
-                    <span>{errorMessage}</span>
-                  </div>
-                )}
-
-                {/* Extract Action Button */}
-                <div style={{ marginTop: '1.5rem' }}>
-                  <button 
-                    onClick={handleExtract}
-                    disabled={isLoading}
-                    className="btn-tactile btn-primary"
-                    style={{ width: '100%', padding: '0.85rem 1rem', fontSize: '0.9rem' }}
-                  >
-                    {isLoading ? (
-                      <>
-                        <span className="spinner-chassis"></span>
-                        <span>{statusMessage || 'Mengekstrak Agenda...'}</span>
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles size={16} />
-                        <span>Mulai Ekstraksi AI & Jadwalkan</span>
-                      </>
-                    )}
-                  </button>
-                </div>
               </div>
             </div>
 
