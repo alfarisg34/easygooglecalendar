@@ -213,6 +213,15 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` untuk menghubungkan akun Google 
       return { ok: true };
     }
 
+    if (!geminiKey && !process.env.GEMINI_API_KEY) {
+      await sendTelegramMessage({
+        botToken,
+        chatId,
+        text: `⚠️ *Google Gemini API Key Belum Dikonfigurasi*\n\nBot membutuhkan API Key Gemini untuk membaca berkas. Silakan pasang \`GEMINI_API_KEY\` di Vercel Environment Variables atau masukkan Gemini API Key di website EasyCal sebelum menyetel webhook.`
+      });
+      return { ok: true };
+    }
+
     await sendTelegramMessage({
       botToken,
       chatId,
@@ -250,6 +259,15 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` untuk menghubungkan akun Google 
 
   // Process Photo / Poster
   if (msg.photo && msg.photo.length > 0) {
+    if (!geminiKey && !process.env.GEMINI_API_KEY) {
+      await sendTelegramMessage({
+        botToken,
+        chatId,
+        text: `⚠️ *Google Gemini API Key Belum Dikonfigurasi*\n\nBot membutuhkan API Key Gemini untuk membaca poster. Silakan pasang \`GEMINI_API_KEY\` di Vercel Environment Variables atau masukkan Gemini API Key di website EasyCal sebelum menyetel webhook.`
+      });
+      return { ok: true };
+    }
+
     const bestPhoto = msg.photo[msg.photo.length - 1];
 
     await sendTelegramMessage({
@@ -289,6 +307,15 @@ ${!isConnected ? '💡 *Tips*: Ketik `/connect` untuk menghubungkan akun Google 
 
   // Process Text Chat
   if (text.length >= 20) {
+    if (!geminiKey && !process.env.GEMINI_API_KEY) {
+      await sendTelegramMessage({
+        botToken,
+        chatId,
+        text: `⚠️ *Google Gemini API Key Belum Dikonfigurasi*\n\nBot membutuhkan API Key Gemini untuk membaca teks undangan. Silakan pasang \`GEMINI_API_KEY\` di Vercel Environment Variables atau masukkan Gemini API Key di website EasyCal sebelum menyetel webhook.`
+      });
+      return { ok: true };
+    }
+
     await sendTelegramMessage({
       botToken,
       chatId,

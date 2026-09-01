@@ -10,11 +10,11 @@ export async function POST(req: NextRequest) {
     const botToken = searchParams.get('bot_token') || searchParams.get('token') || process.env.TELEGRAM_BOT_TOKEN;
     const geminiKey = searchParams.get('gemini_key') || searchParams.get('key') || process.env.GEMINI_API_KEY;
 
-    if (!botToken || !geminiKey) {
+    if (!botToken) {
       // Return 200 to Telegram so it doesn't repeatedly retry failing webhooks
       return NextResponse.json({
         ok: false,
-        error: 'Parameter bot_token dan gemini_key diperlukan di URL webhook (?bot_token=...&gemini_key=...)'
+        error: 'Parameter bot_token diperlukan di URL webhook (?bot_token=...)'
       });
     }
 
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     const origin = req.nextUrl.origin;
 
     // Process update asynchronously (Multi-User Aware)
-    await handleTelegramWebhook(update, botToken, geminiKey, origin);
+    await handleTelegramWebhook(update, botToken, geminiKey || '', origin);
 
     return NextResponse.json({ ok: true });
   } catch (err: any) {
