@@ -3,6 +3,8 @@ import { extractEventFromSource } from '@/lib/gemini';
 import { generateICSContent } from '@/lib/calendar-builder';
 import { insertGoogleCalendarEvent } from '@/lib/google-calendar-api';
 import { getUserGoogleAuth } from '@/lib/token-store';
+import { getSessionFromRequest } from '@/lib/auth-session';
+import { getUserById, getUserByEmail } from '@/lib/db';
 import { ExtractionRequest } from '@/lib/types';
 
 export const maxDuration = 60; // 60 seconds serverless timeout
@@ -12,17 +14,39 @@ export async function POST(req: NextRequest) {
     const contentType = req.headers.get('content-type') || '';
     let extractionParams: ExtractionRequest;
     let autoSync = false;
-    let userId = req.headers.get('x-user-id') || 'web_anonymous';
+    let passedApiKey = '';
+    let passedModel = '';
+    let passedEngine = '';
+    let customCalendarId = 'primary';
+
+    // Retrieve session user if present
+    const session = await getSessionFromRequest(req);
+    let dbUser = null;
+    if (session) {
+      dbUser = (await getUserById(session.userId)) || (await getUserByEmail(session.email));
+      if (dbUser?.calendar_id) {
+        customCalendarId = dbUser.calendar_id;
+      }
+    }
+
+    let userId = dbUser?.id || session?.userId || req.headers.get('x-user-id') || 'web_user';
 
     if (contentType.includes('multipart/form-data')) {
       const formData = await req.formData();
       const file = formData.get('file') as File | null;
       const text = formData.get('text') as string | null;
-      const apiKey = (formData.get('apiKey') as string) || req.headers.get('x-api-key') || '';
-      const model = (formData.get('model') as string) || 'gemini-3.6-flash';
-      const engine = (formData.get('engine') as any) || 'gemini';
+      passedApiKey = (formData.get('apiKey') as string) || req.headers.get('x-api-key') || '';
+      passedModel = (formData.get('model') as string) || '';
+      passedEngine = (formData.get('engine') as string) || '';
       autoSync = formData.get('autoSync') === 'true';
       userId = (formData.get('userId') as string) || userId;
+      if (formData.get('calendarId')) {
+        customCalendarId = formData.get('calendarId') as string;
+      }
+
+      const finalApiKey = passedApiKey || dbUser?.gemini_api_key || process.env.GEMINI_API_KEY || '';
+      const finalModel = passedModel || dbUser?.model_name || 'gemini-3.6-flash';
+      const finalEngine = (passedEngine || dbUser?.ocr_engine || 'gemini') as any;
 
       if (file) {
         const arrayBuffer = await file.arrayBuffer();
@@ -32,9 +56,9 @@ export async function POST(req: NextRequest) {
         const isPdf = mimeType.includes('pdf') || file.name.toLowerCase().endsWith('.pdf');
 
         extractionParams = {
-          apiKey,
-          model,
-          engine,
+          apiKey: finalApiKey,
+          model: finalModel,
+          engine: finalEngine,
           sourceType: isPdf ? 'pdf' : 'image',
           base64Data,
           mimeType,
@@ -42,9 +66,9 @@ export async function POST(req: NextRequest) {
         };
       } else if (text) {
         extractionParams = {
-          apiKey,
-          model,
-          engine,
+          apiKey: finalApiKey,
+          model: finalModel,
+          engine: finalEngine,
           sourceType: 'text',
           text
         };
@@ -56,20 +80,28 @@ export async function POST(req: NextRequest) {
       }
     } else {
       const body = await req.json();
-      const apiKey = body.apiKey || req.headers.get('x-api-key') || '';
+      passedApiKey = body.apiKey || req.headers.get('x-api-key') || '';
       autoSync = Boolean(body.autoSync);
       userId = body.userId || userId;
+      if (body.calendarId) customCalendarId = body.calendarId;
+
+      const finalApiKey = passedApiKey || dbUser?.gemini_api_key || process.env.GEMINI_API_KEY || '';
+      const finalModel = body.model || dbUser?.model_name || 'gemini-3.6-flash';
+      const finalEngine = body.engine || dbUser?.ocr_engine || 'gemini';
+
       extractionParams = {
         ...body,
-        apiKey
+        apiKey: finalApiKey,
+        model: finalModel,
+        engine: finalEngine
       };
     }
 
-    if (!extractionParams.apiKey && !process.env.GEMINI_API_KEY) {
+    if (!extractionParams.apiKey) {
       return NextResponse.json(
         {
           success: false,
-          error: 'Google Gemini API Key wajib diisi (BYOK). Dapatkan gratis di Google AI Studio (aistudio.google.com).'
+          error: 'Google Gemini API Key wajib diisi. Silakan isi di tab Pengaturan atau pada form.'
         },
         { status: 401 }
       );
@@ -93,11 +125,12 @@ export async function POST(req: NextRequest) {
     if (autoSync || userId) {
       const userAuth = await getUserGoogleAuth(userId);
       if (userAuth && userAuth.refreshToken) {
-        const directInsert = await insertGoogleCalendarEvent(userId, result.event);
+        const directInsert = await insertGoogleCalendarEvent(userId, result.event, customCalendarId);
         if (directInsert.success) {
           autoSyncResult = {
             synced: true,
             email: userAuth.email,
+            calendarId: customCalendarId,
             htmlLink: directInsert.htmlLink
           };
         }

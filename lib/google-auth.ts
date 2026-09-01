@@ -1,9 +1,11 @@
 import { google } from 'googleapis';
 
 const SCOPES = [
+  'https://www.googleapis.com/auth/calendar',
   'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/userinfo.email',
-  'https://www.googleapis.com/auth/userinfo.profile'
+  'https://www.googleapis.com/auth/userinfo.profile',
+  'openid'
 ];
 
 /**
@@ -21,8 +23,9 @@ export function getGoogleOAuth2Client(customRedirectUri?: string) {
  * Generates the Google OAuth authorization URL
  */
 export function generateGoogleAuthUrl(params: {
-  userId: string; // e.g. "tg_123456789"
+  userId?: string; // e.g. "tg_123456789" or "web_user"
   redirectUri?: string;
+  loginHint?: string;
 }): string {
   const oauth2Client = getGoogleOAuth2Client(params.redirectUri);
 
@@ -30,7 +33,8 @@ export function generateGoogleAuthUrl(params: {
     access_type: 'offline', // Critical: requests refresh_token
     prompt: 'consent',     // Forces consent prompt to guarantee refresh_token
     scope: SCOPES,
-    state: params.userId   // Passes userId so the callback knows who to link
+    state: params.userId || 'web_user',
+    login_hint: params.loginHint
   });
 }
 

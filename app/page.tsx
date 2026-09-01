@@ -5,11 +5,36 @@ import {
   Calendar, FileText, Image as ImageIcon, MessageSquare, 
   Key, Bot, Code2, Sparkles, Download, Copy, Check, 
   ExternalLink, Trash2, RefreshCw, Clock, MapPin, 
-  Video, Users, BookOpen, AlertCircle, Send, CheckCircle2
+  Video, Users, BookOpen, AlertCircle, Send, CheckCircle2,
+  LogOut, Shield, Database, Settings, ArrowRight, Eye, EyeOff,
+  CalendarCheck, Cpu
 } from 'lucide-react';
 import { CalendarEvent } from '@/lib/types';
 import { DateTime } from 'luxon';
 import { buildGoogleCalendarUrl, generateICSContent } from '@/lib/calendar-builder';
+
+interface UserSession {
+  id: string;
+  email: string;
+  name?: string;
+  picture?: string;
+  hasGoogleCalendar: boolean;
+  settings: {
+    geminiApiKey: string;
+    modelName: string;
+    ocrEngine: string;
+    ocrServiceUrl: string;
+    calendarId: string;
+    telegramBotToken: string;
+    telegramChatId: string;
+  };
+}
+
+interface DbStatus {
+  connected: boolean;
+  provider: string;
+  message: string;
+}
 
 const SAMPLE_TEXT_LETTER = `KEMENTERIAN KETENAGAKERJAAN REPUBLIK INDONESIA
 DIREKTORAT JENDERAL PEMBINAAN PENEMPATAN TENAGA KERJA
@@ -65,78 +90,119 @@ Zoom Meeting & Live Streaming YouTube Pusdiklat Kemnaker
 GRATIS & TERBUKA UNTUK UMUM!`;
 
 export default function HomePage() {
-  // Config & BYOK State
-  const [apiKey, setApiKey] = useState<string>('');
-  const [model, setModel] = useState<string>('gemini-3.6-flash');
-  const [engine, setEngine] = useState<'gemini' | 'ocr_service'>('gemini');
+  // Auth & Session State
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [user, setUser] = useState<UserSession | null>(null);
+  const [dbStatus, setDbStatus] = useState<DbStatus | null>(null);
 
-  // Input States
-  const [activeTab, setActiveTab] = useState<'pdf' | 'image' | 'text'>('pdf');
+  // Active View Tab in Authenticated Mode
+  const [activeView, setActiveView] = useState<'extract' | 'settings' | 'telegram' | 'docs'>('extract');
+
+  // Extraction Workspace State
+  const [inputTab, setInputTab] = useState<'pdf' | 'image' | 'text'>('pdf');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [inputText, setInputText] = useState<string>('');
   const [isDragging, setIsDragging] = useState<boolean>(false);
-
-  // Execution States
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [extractedEvent, setExtractedEvent] = useState<CalendarEvent | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
-
-  // Modals & Popups
-  const [isKeyModalOpen, setIsKeyModalOpen] = useState<boolean>(false);
-  const [isTelegramModalOpen, setIsTelegramModalOpen] = useState<boolean>(false);
-  const [isApiDocsOpen, setIsApiDocsOpen] = useState<boolean>(false);
+  const [autoSyncResult, setAutoSyncResult] = useState<any>(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
 
-  // Telegram Setup State
-  const [tgBotToken, setTgBotToken] = useState<string>('');
-  const [tgCustomUrl, setTgCustomUrl] = useState<string>('');
-  const [tgBotInfo, setTgBotInfo] = useState<any>(null);
-  const [tgStatus, setTgStatus] = useState<{ loading: boolean; info?: string; error?: string }>({ loading: false });
+  // Settings Form State
+  const [settingsForm, setSettingsForm] = useState({
+    geminiApiKey: '',
+    modelName: 'gemini-3.6-flash',
+    ocrEngine: 'gemini',
+    ocrServiceUrl: '',
+    calendarId: 'primary',
+    telegramBotToken: '',
+    telegramChatId: ''
+  });
+  const [showApiKey, setShowApiKey] = useState<boolean>(false);
+  const [isSavingSettings, setIsSavingSettings] = useState<boolean>(false);
+  const [settingsStatus, setSettingsStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // Google OAuth Web State
-  const [googleAccount, setGoogleAccount] = useState<{ connected: boolean; email?: string; name?: string } | null>(null);
-  const [autoSyncResult, setAutoSyncResult] = useState<any>(null);
+  // Telegram Webhook Setup State
+  const [tgStatus, setTgStatus] = useState<{ loading: boolean; info?: string; error?: string }>({ loading: false });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const checkGoogleAuthStatus = async () => {
+  // Check auth on load
+  const fetchSession = async () => {
     try {
-      const res = await fetch('/api/auth/status?user_id=web_user');
+      setAuthLoading(true);
+      const res = await fetch('/api/auth/me');
       const data = await res.json();
-      if (data.connected) {
-        setGoogleAccount(data);
+      if (data.authenticated && data.user) {
+        setUser(data.user);
+        setSettingsForm({
+          geminiApiKey: data.user.settings?.geminiApiKey || '',
+          modelName: data.user.settings?.modelName || 'gemini-3.6-flash',
+          ocrEngine: data.user.settings?.ocrEngine || 'gemini',
+          ocrServiceUrl: data.user.settings?.ocrServiceUrl || '',
+          calendarId: data.user.settings?.calendarId || 'primary',
+          telegramBotToken: data.user.settings?.telegramBotToken || '',
+          telegramChatId: data.user.settings?.telegramChatId || ''
+        });
       } else {
-        setGoogleAccount({ connected: false });
+        setUser(null);
       }
-    } catch (e) {
-      setGoogleAccount({ connected: false });
+      if (data.dbStatus) {
+        setDbStatus(data.dbStatus);
+      }
+    } catch (err) {
+      console.error('Failed to fetch session:', err);
+      setUser(null);
+    } finally {
+      setAuthLoading(false);
     }
   };
 
-  // Load stored settings on mount
   useEffect(() => {
-    const savedKey = localStorage.getItem('gemini_calendar_api_key');
-    if (savedKey) setApiKey(savedKey);
-    const savedBotToken = localStorage.getItem('tg_bot_token');
-    if (savedBotToken) setTgBotToken(savedBotToken);
-    checkGoogleAuthStatus();
+    fetchSession();
   }, []);
 
-  const handleDisconnectGoogle = async () => {
-    if (!confirm('Putuskan akun Google Calendar dari aplikasi?')) return;
+  const handleLogout = async () => {
+    if (!confirm('Apakah Anda yakin ingin keluar dari akun?')) return;
     try {
-      await fetch('/api/auth/status?user_id=web_user', { method: 'DELETE' });
-      setGoogleAccount({ connected: false });
+      await fetch('/api/auth/logout', { method: 'POST' });
+      setUser(null);
+      setActiveView('extract');
     } catch (e) {
-      console.error(e);
+      window.location.href = '/api/auth/logout';
     }
   };
 
-  const handleSaveApiKey = (key: string) => {
-    setApiKey(key);
-    localStorage.setItem('gemini_calendar_api_key', key);
-    setIsKeyModalOpen(false);
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingSettings(true);
+    setSettingsStatus(null);
+    try {
+      const res = await fetch('/api/user/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settingsForm)
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSettingsStatus({ type: 'success', message: data.message || 'Pengaturan berhasil disimpan ke database Neon!' });
+        // Update user state
+        if (user) {
+          setUser({
+            ...user,
+            settings: data.settings
+          });
+        }
+      } else {
+        setSettingsStatus({ type: 'error', message: data.error || 'Gagal menyimpan pengaturan.' });
+      }
+    } catch (err: any) {
+      setSettingsStatus({ type: 'error', message: `Gagal menyimpan: ${err.message}` });
+    } finally {
+      setIsSavingSettings(false);
+    }
   };
 
   const handleFileDrop = (e: React.DragEvent) => {
@@ -146,9 +212,9 @@ export default function HomePage() {
       const file = e.dataTransfer.files[0];
       setSelectedFile(file);
       if (file.name.toLowerCase().endsWith('.pdf')) {
-        setActiveTab('pdf');
+        setInputTab('pdf');
       } else {
-        setActiveTab('image');
+        setInputTab('image');
       }
     }
   };
@@ -159,1045 +225,985 @@ export default function HomePage() {
     }
   };
 
-  // Perform Extraction
   const handleExtract = async () => {
-    if (!apiKey) {
-      setIsKeyModalOpen(true);
+    setErrorMessage('');
+    setExtractedEvent(null);
+    setAutoSyncResult(null);
+
+    // Validate API Key
+    const effectiveKey = settingsForm.geminiApiKey;
+    if (!effectiveKey) {
+      setErrorMessage('Google Gemini API Key belum dikonfigurasi. Silakan isi di tab "Pengaturan & Kredensial".');
+      setActiveView('settings');
       return;
     }
 
-    if (activeTab === 'text' && !inputText.trim()) {
-      alert('Mohon masukkan teks surat atau undangan terlebih dahulu.');
-      return;
-    }
-
-    if ((activeTab === 'pdf' || activeTab === 'image') && !selectedFile) {
-      alert('Mohon pilih atau unggah berkas terlebih dahulu.');
-      return;
+    if (inputTab === 'text') {
+      if (!inputText.trim()) {
+        setErrorMessage('Mohon masukkan teks atau pesan undangan yang ingin diekstrak.');
+        return;
+      }
+    } else {
+      if (!selectedFile) {
+        setErrorMessage(`Mohon pilih berkas ${inputTab === 'pdf' ? 'PDF' : 'Gambar/Poster'} terlebih dahulu.`);
+        return;
+      }
     }
 
     setIsLoading(true);
-    setErrorMessage('');
-    setAutoSyncResult(null);
-    setStatusMessage('Menginisialisasi analisis berkas & visual reasoning...');
+    setStatusMessage('Menginisialisasi pemindaian AI...');
 
     try {
-      let response: Response;
-      const isAutoSync = Boolean(googleAccount?.connected);
+      const formData = new FormData();
+      formData.append('apiKey', effectiveKey);
+      formData.append('model', settingsForm.modelName);
+      formData.append('engine', settingsForm.ocrEngine);
+      formData.append('calendarId', settingsForm.calendarId || 'primary');
+      formData.append('autoSync', user?.hasGoogleCalendar ? 'true' : 'false');
+      if (user?.id) formData.append('userId', user.id);
 
-      if (activeTab === 'text') {
-        setStatusMessage('Menganalisis teks undangan dengan Google Gemini AI...');
-        response = await fetch('/api/extract', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            apiKey,
-            model,
-            engine,
-            sourceType: 'text',
-            text: inputText,
-            userId: 'web_user',
-            autoSync: isAutoSync
-          })
-        });
-      } else {
-        setStatusMessage(
-          engine === 'ocr_service'
-            ? 'Menjalankan OCR melalui ocr.alfarighilmana.my.id...'
-            : 'Mengunggah & menganalisis multimodal visual di Gemini AI...'
-        );
-        const formData = new FormData();
-        if (selectedFile) formData.append('file', selectedFile);
-        formData.append('apiKey', apiKey);
-        formData.append('model', model);
-        formData.append('engine', engine);
-        formData.append('userId', 'web_user');
-        formData.append('autoSync', isAutoSync ? 'true' : 'false');
-
-        response = await fetch('/api/extract', {
-          method: 'POST',
-          body: formData
-        });
+      if (inputTab === 'text') {
+        formData.append('text', inputText);
+        setStatusMessage('Mengekstrak entitas jadwal & agenda dari teks...');
+      } else if (selectedFile) {
+        formData.append('file', selectedFile);
+        setStatusMessage(`Memproses ${selectedFile.name} melalui OCR & Gemini Vision...`);
       }
 
-      const data = await response.json();
+      const res = await fetch('/api/extract', {
+        method: 'POST',
+        body: formData
+      });
 
-      if (response.ok && data.success && data.event) {
-        setExtractedEvent(data.event);
-        if (data.autoSyncResult && data.autoSyncResult.synced) {
-          setAutoSyncResult(data.autoSyncResult);
-        }
-        setStatusMessage('');
-      } else {
-        setErrorMessage(data.error || 'Gagal mengekstrak agenda dari dokumen.');
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Gagal mengekstrak informasi agenda.');
+      }
+
+      setExtractedEvent(data.event);
+      if (data.autoSyncResult) {
+        setAutoSyncResult(data.autoSyncResult);
       }
     } catch (err: any) {
-      setErrorMessage(`Koneksi error: ${err.message}`);
+      setErrorMessage(err.message || 'Terjadi kesalahan sistem saat mengekstrak.');
     } finally {
       setIsLoading(false);
+      setStatusMessage('');
     }
   };
 
-  // 1-Click Action: Download ICS
-  const handleDownloadIcs = () => {
+  const handleDownloadICS = () => {
     if (!extractedEvent) return;
     const icsString = generateICSContent(extractedEvent);
     const blob = new Blob([icsString], { type: 'text/calendar;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${(extractedEvent.title || 'agenda').replace(/[^a-zA-Z0-9]/g, '_')}.ics`;
+    link.setAttribute('download', `${(extractedEvent.title || 'agenda').replace(/[^a-zA-Z0-9]/g, '_')}.ics`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    URL.revokeObjectURL(url);
   };
 
-  // Copy Broadcast Text
-  const handleCopyBroadcast = () => {
-    if (!extractedEvent) return;
-    const startDt = DateTime.fromISO(extractedEvent.start_time).setZone('Asia/Jakarta');
-    const endDt = DateTime.fromISO(extractedEvent.end_time).setZone('Asia/Jakarta');
-
-    const formatted = `📅 *${extractedEvent.title}*
-
-🕒 *Waktu*: ${startDt.isValid ? startDt.toFormat('cccc, dd LLLL yyyy | HH:mm') : extractedEvent.start_time} s.d. ${endDt.isValid ? endDt.toFormat('HH:mm') : extractedEvent.end_time} WIB
-📍 *Lokasi*: ${extractedEvent.location}
-${extractedEvent.jp ? `📚 *Bobot*: ${extractedEvent.jp}\n` : ''}${extractedEvent.meeting_link ? `🔗 *Link Meeting*: ${extractedEvent.meeting_link}\n` : ''}${extractedEvent.meeting_id_pass ? `🔑 *Kredensial*: ${extractedEvent.meeting_id_pass}\n` : ''}${extractedEvent.speakers ? `👥 *Narasumber*: ${extractedEvent.speakers}\n` : ''}
-📝 *Agenda & Keterangan*:
-${extractedEvent.description}
-
-🔗 *Simpan Langsung ke Google Calendar*:
-${extractedEvent.google_calendar_url}`;
-
-    navigator.clipboard.writeText(formatted).then(() => {
-      setCopyFeedback('Teks tersalin!');
-      setTimeout(() => setCopyFeedback(null), 2000);
-    });
+  const handleCopyText = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    setCopyFeedback(label);
+    setTimeout(() => setCopyFeedback(null), 2500);
   };
 
-  // Telegram Bot Test Token (@BotFather)
-  const handleCheckBotInfo = async () => {
-    if (!tgBotToken) {
-      alert('Mohon masukkan Telegram Bot Token.');
+  const handleSetupTelegramWebhook = async () => {
+    if (!settingsForm.telegramBotToken.trim()) {
+      alert('Mohon isi Telegram Bot Token terlebih dahulu di form Pengaturan.');
       return;
     }
-    setTgStatus({ loading: true, info: undefined, error: undefined });
+    setTgStatus({ loading: true });
     try {
-      const res = await fetch('/api/telegram/setup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          botToken: tgBotToken,
-          action: 'get_me'
-        })
-      });
-      const data = await res.json();
-      if (data.ok && data.result) {
-        setTgBotInfo(data.result);
-        setTgStatus({ loading: false, info: `Bot Valid: @${data.result.username} (${data.result.first_name})` });
-      } else {
-        setTgStatus({ loading: false, error: data.description || 'Token bot tidak valid.' });
-      }
-    } catch (err: any) {
-      setTgStatus({ loading: false, error: err.message });
-    }
-  };
-
-  // Telegram Bot Webhook Setter
-  const handleSetTelegramWebhook = async () => {
-    if (!tgBotToken) {
-      alert('Mohon masukkan Telegram Bot Token dari @BotFather');
-      return;
-    }
-    if (!apiKey) {
-      alert('Mohon masukkan Google Gemini API Key Anda terlebih dahulu di menu "Set Gemini Key (BYOK)".');
-      return;
-    }
-
-    setTgStatus({ loading: true, info: undefined, error: undefined });
-    localStorage.setItem('tg_bot_token', tgBotToken);
-
-    try {
-      let baseOrigin = tgCustomUrl.trim();
-      if (!baseOrigin) {
-        baseOrigin = window.location.origin;
-      }
-
-      // Ensure HTTPS for Telegram
-      if (!baseOrigin.startsWith('https://')) {
-        setTgStatus({ 
-          loading: false, 
-          error: 'Telegram mewajibkan URL HTTPS publik (misal: https://your-project.vercel.app atau https://xxxx.ngrok-free.app). Silakan deploy ke Vercel atau masukkan URL HTTPS Anda.' 
-        });
-        return;
-      }
-
-      // Remove trailing slash
-      baseOrigin = baseOrigin.replace(/\/$/, '');
-      const targetWebhookUrl = `${baseOrigin}/api/telegram/webhook?bot_token=${encodeURIComponent(tgBotToken)}&gemini_key=${encodeURIComponent(apiKey)}`;
-
-      const res = await fetch('/api/telegram/setup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          botToken: tgBotToken,
-          webhookUrl: targetWebhookUrl,
-          action: 'set_webhook'
-        })
-      });
-
+      const webhookUrl = `${window.location.origin}/api/telegram`;
+      const res = await fetch(`https://api.telegram.org/bot${settingsForm.telegramBotToken.trim()}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
       const data = await res.json();
       if (data.ok) {
-        setTgStatus({ loading: false, info: data.description || 'Webhook aktif! Bot siap menerima berkas PDF & Poster.' });
+        setTgStatus({ loading: false, info: `✅ Webhook Telegram berhasil dipasang ke:\n${webhookUrl}` });
       } else {
-        setTgStatus({ loading: false, error: data.description || 'Gagal menyetel webhook.' });
+        setTgStatus({ loading: false, error: `Gagal: ${data.description || 'Token tidak valid'}` });
       }
-    } catch (err: any) {
-      setTgStatus({ loading: false, error: err.message });
+    } catch (e: any) {
+      setTgStatus({ loading: false, error: e.message });
     }
   };
 
-  // Telegram Delete Webhook
-  const handleDeleteTelegramWebhook = async () => {
-    if (!tgBotToken) return;
-    setTgStatus({ loading: true, info: undefined, error: undefined });
-    try {
-      const res = await fetch('/api/telegram/setup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          botToken: tgBotToken,
-          action: 'delete_webhook'
-        })
-      });
-      const data = await res.json();
-      if (data.ok) {
-        setTgStatus({ loading: false, info: 'Webhook berhasil dihapus.' });
-      } else {
-        setTgStatus({ loading: false, error: data.description || 'Gagal menghapus webhook.' });
-      }
-    } catch (err: any) {
-      setTgStatus({ loading: false, error: err.message });
-    }
-  };
+  // ----------------------------------------------------
+  // RENDER: LOADING STATE
+  // ----------------------------------------------------
+  if (authLoading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-void)' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div className="spinner-chassis amber" style={{ width: 36, height: 36, borderWidth: 3, margin: '0 auto 1.5rem' }}></div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--text-dim)', letterSpacing: '0.1em' }}>
+            MEMERIKSA SESI & KONEKSI TELEMETRI...
+          </div>
+        </div>
+      </div>
+    );
+  }
 
+  // ----------------------------------------------------
+  // RENDER: UNAUTHENTICATED / GOOGLE LOGIN LANDING PAGE
+  // ----------------------------------------------------
+  if (!user) {
+    return (
+      <main className="app-container">
+        {/* Masthead Header */}
+        <header className="masthead">
+          <div className="brand-badge">
+            <span className="led amber" title="System Ready"></span>
+            <span className="brand-title">EasyCal</span>
+            <span className="brand-sub">AI Agenda & OCR Cockpit</span>
+          </div>
+
+          <div className="masthead-actions">
+            <div className="status-badge-tag badge-online">
+              <Database size={13} />
+              <span>{dbStatus?.connected ? 'Neon PostgreSQL Ready' : 'Database Ready'}</span>
+            </div>
+            <a href="/api/auth/google" className="btn-tactile btn-primary">
+              <Users size={14} />
+              <span>Masuk dengan Google</span>
+            </a>
+          </div>
+        </header>
+
+        {/* Hero Section */}
+        <section className="landing-hero-container">
+          <div className="hero-grid">
+            <div>
+              <div className="hero-eyebrow">
+                <Sparkles size={14} />
+                <span>BYOK ARCHITECTURE // AI VISION & NEON DB</span>
+              </div>
+              <h1 className="hero-headline">
+                Ekstraksi Surat Dinas & Undangan Otomatis ke <em>Google Calendar</em>.
+              </h1>
+              <p className="hero-desc">
+                Konversi dokumen PDF nota dinas dinas, flyer poster bimtek/webinar, dan chat broadcast secara instan menjadi event kalender terstruktur dengan kecerdasan Google Gemini AI.
+              </p>
+
+              <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                <a href="/api/auth/google" className="google-btn-cockpit" style={{ maxWidth: '320px' }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                  </svg>
+                  <span>Masuk dengan Google</span>
+                </a>
+              </div>
+            </div>
+
+            {/* Login Prompt Cockpit Card */}
+            <div>
+              <div className="google-login-box">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--signal-amber)', fontWeight: 600 }}>
+                    [ AUTHENTICATION GATE ]
+                  </span>
+                  <span className="status-badge-tag badge-success">
+                    <Shield size={12} />
+                    <span>OAuth 2.0 Secure</span>
+                  </span>
+                </div>
+
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.5rem', color: '#FFF' }}>
+                  Otorisasi Akun Google
+                </h3>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-dim)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
+                  Masuk untuk mengaktifkan sinkronisasi otomatis kalender, mengatur API Key Gemini (BYOK), memilih Target Calendar ID, dan menghubungkan Bot Telegram Anda.
+                </p>
+
+                <a href="/api/auth/google" className="google-btn-cockpit">
+                  <svg width="20" height="20" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                  </svg>
+                  <span>Lanjutkan dengan Google</span>
+                </a>
+
+                <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem', color: 'var(--text-faint)' }}>
+                  <Database size={13} color="var(--signal-amber)" />
+                  <span>Kredensial disimpan terisolasi di database Neon PostgreSQL Vercel.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Feature Cards Grid */}
+          <div className="feature-grid-cockpit">
+            <div className="feature-card-cockpit">
+              <div className="feature-icon-badge">
+                <FileText size={22} />
+              </div>
+              <h4 className="feature-card-title">Format Standar Dinas Indonesia</h4>
+              <p className="feature-card-desc">
+                Mengenali struktur surat dinas: Nomor Surat, Sifat, Hal, Lampiran, Waktu (WIB/WITA/WIT), Ruang Rapat, Narasumber, dan Bobot JP (Jam Pelajaran).
+              </p>
+            </div>
+
+            <div className="feature-card-cockpit">
+              <div className="feature-icon-badge">
+                <CalendarCheck size={22} />
+              </div>
+              <h4 className="feature-card-title">0-Click Realtime Calendar Sync</h4>
+              <p className="feature-card-desc">
+                Setiap event yang diekstrak langsung tersimpan ke Google Calendar Anda secara realtime, lengkap dengan deskripsi terstruktur dan pengingat.
+              </p>
+            </div>
+
+            <div className="feature-card-cockpit">
+              <div className="feature-icon-badge">
+                <Bot size={22} />
+              </div>
+              <h4 className="feature-card-title">Telegram Bot Gateway</h4>
+              <p className="feature-card-desc">
+                Cukup kirimkan file PDF atau forward poster dari Telegram, bot langsung memproses dan menjadwalkan ke Google Calendar Anda.
+              </p>
+            </div>
+
+            <div className="feature-card-cockpit">
+              <div className="feature-icon-badge">
+                <Cpu size={22} />
+              </div>
+              <h4 className="feature-card-title">BYOK & AI Multimodal</h4>
+              <p className="feature-card-desc">
+                Gunakan API Key Gemini Anda sendiri tanpa batasan kuota server bersama, didukung model Gemini 3.6 Flash & Gemini Pro.
+              </p>
+            </div>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  // ----------------------------------------------------
+  // RENDER: AUTHENTICATED DASHBOARD WORKSPACE
+  // ----------------------------------------------------
   return (
-    <div className="app-container">
-      
-      {/* Masthead */}
+    <main className="app-container">
+      {/* Top Cockpit Masthead */}
       <header className="masthead">
         <div className="brand-badge">
-          <span className="led"></span>
-          <a href="#" className="brand-title">EasyCal // Studio</a>
-          <span className="brand-sub">Serverless OCR & Gemini Calendar Engine</span>
+          <span className="led" title="Authenticated & Active"></span>
+          <span className="brand-title">EasyCal</span>
+          <span className="brand-sub">Workspace</span>
         </div>
 
+        {/* User Profile & Action Bar */}
         <div className="masthead-actions">
-          {/* Engine Selector */}
-          <select 
-            className="chassis-select" 
-            style={{ width: 'auto', fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}
-            value={engine}
-            onChange={(e) => setEngine(e.target.value as any)}
-            title="Pilih Engine Ekstraksi"
-          >
-            <option value="gemini">⚡ Gemini Multimodal Direct</option>
-            <option value="ocr_service">🔬 ocr.alfarighilmana.my.id + AI</option>
-          </select>
-
-          {/* Model Selector */}
-          <select 
-            className="chassis-select" 
-            style={{ width: 'auto', fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-          >
-            <option value="gemini-3.6-flash">Gemini 3.6 Flash (Terbaru)</option>
-            <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
-            <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-            <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
-          </select>
-
-          {/* Telegram Connect Button */}
-          <button 
-            type="button" 
-            className="btn-tactile"
-            onClick={() => setIsTelegramModalOpen(true)}
-            title="Hubungkan Telegram Bot Anda"
-          >
-            <Bot size={14} /> Telegram Bot
-          </button>
-
-          {/* API Docs Button */}
-          <button 
-            type="button" 
-            className="btn-tactile"
-            onClick={() => setIsApiDocsOpen(true)}
-            title="Dokumentasi REST API & cURL"
-          >
-            <Code2 size={14} /> API
-          </button>
-
-          {/* Google Calendar OAuth Auto-Sync Button */}
-          {googleAccount?.connected ? (
-            <button 
-              type="button" 
-              className="btn-tactile"
-              style={{ color: 'var(--signal-green)', borderColor: 'rgba(0, 255, 102, 0.3)' }}
-              onClick={handleDisconnectGoogle}
-              title={`Google Calendar terhubung (${googleAccount.email}). Klik untuk memutuskan koneksi.`}
-            >
-              <CheckCircle2 size={14} color="var(--signal-green)" /> {googleAccount.email}
-            </button>
+          {/* Google Calendar Connected Status Badge */}
+          {user.hasGoogleCalendar ? (
+            <div className="status-badge-tag badge-success">
+              <CalendarCheck size={13} />
+              <span>Calendar: Connected</span>
+            </div>
           ) : (
-            <a 
-              href="/api/auth/google?user_id=web_user"
-              className="btn-tactile"
-              title="Hubungkan Akun Google untuk Direct 0-Click Auto-Sync"
-            >
-              <Calendar size={14} /> Hubungkan Google (0-Click)
+            <a href="/api/auth/google" className="status-badge-tag badge-offline" style={{ textDecoration: 'none' }}>
+              <AlertCircle size={13} />
+              <span>Calendar: Re-link Google</span>
             </a>
           )}
 
-          {/* BYOK Button */}
-          <button 
-            type="button" 
-            className={`btn-tactile ${apiKey ? '' : 'btn-primary'}`}
-            onClick={() => setIsKeyModalOpen(true)}
-          >
-            <Key size={14} />
-            {apiKey ? 'API Key: Set' : 'Set Gemini Key (BYOK)'}
+          {/* Database Status Badge */}
+          <div className="status-badge-tag badge-online" title={dbStatus?.message || 'Neon DB'}>
+            <Database size={13} />
+            <span>Neon DB: {dbStatus?.connected ? 'Online' : 'Fallback'}</span>
+          </div>
+
+          {/* User Profile Info Chip */}
+          <div className="user-profile-chip">
+            {user.picture ? (
+              <img src={user.picture} alt={user.name || 'User'} className="user-avatar" />
+            ) : (
+              <div className="user-avatar-fallback">
+                {(user.name || user.email || 'U').charAt(0).toUpperCase()}
+              </div>
+            )}
+            <div className="user-info-text">
+              <span className="user-name">{user.name || 'User'}</span>
+              <span className="user-email">{user.email}</span>
+            </div>
+          </div>
+
+          {/* Logout Button */}
+          <button onClick={handleLogout} className="btn-tactile btn-danger" title="Keluar dari akun">
+            <LogOut size={14} />
+            <span>Keluar</span>
           </button>
         </div>
       </header>
 
-      {/* Main Split Viewport */}
-      <main className="split-viewport">
-        
-        {/* Left Column: Input Panel */}
-        <section className="chassis-card">
-          <div className="chassis-header">
-            <span>[ 01 / SOURCE INGESTION ]</span>
-            <span>Maks: 50 MB</span>
-          </div>
+      {/* Navigation Tabs Bar */}
+      <nav className="cockpit-tabs-bar">
+        <button 
+          onClick={() => setActiveView('extract')} 
+          className={`cockpit-tab-btn ${activeView === 'extract' ? 'active' : ''}`}
+        >
+          <Calendar size={15} />
+          <span>Ekstraktor Agenda</span>
+        </button>
 
-          <div className="chassis-body">
-            
-            {/* Mode Switcher */}
-            <div className="mode-segmented">
-              <button 
-                type="button"
-                className={`mode-tab ${activeTab === 'pdf' ? 'active' : ''}`}
-                onClick={() => { setActiveTab('pdf'); setSelectedFile(null); }}
-              >
-                <FileText size={13} /> Dokumen PDF
-              </button>
-              <button 
-                type="button"
-                className={`mode-tab ${activeTab === 'image' ? 'active' : ''}`}
-                onClick={() => { setActiveTab('image'); setSelectedFile(null); }}
-              >
-                <ImageIcon size={13} /> Poster Gambar
-              </button>
-              <button 
-                type="button"
-                className={`mode-tab ${activeTab === 'text' ? 'active' : ''}`}
-                onClick={() => { setActiveTab('text'); setSelectedFile(null); }}
-              >
-                <MessageSquare size={13} /> Pesan Teks
+        <button 
+          onClick={() => setActiveView('settings')} 
+          className={`cockpit-tab-btn ${activeView === 'settings' ? 'active' : ''}`}
+        >
+          <Settings size={15} />
+          <span>Pengaturan & Kredensial</span>
+          {!settingsForm.geminiApiKey && (
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--signal-amber)', display: 'inline-block' }}></span>
+          )}
+        </button>
+
+        <button 
+          onClick={() => setActiveView('telegram')} 
+          className={`cockpit-tab-btn ${activeView === 'telegram' ? 'active' : ''}`}
+        >
+          <Bot size={15} />
+          <span>Integrasi Bot Telegram</span>
+        </button>
+
+        <button 
+          onClick={() => setActiveView('docs')} 
+          className={`cockpit-tab-btn ${activeView === 'docs' ? 'active' : ''}`}
+        >
+          <Code2 size={15} />
+          <span>Panduan API</span>
+        </button>
+      </nav>
+
+      {/* ----------------------------------------------------
+          TAB 1: EKSTRAKTOR AGENDA (WORKSPACE)
+          ---------------------------------------------------- */}
+      {activeView === 'extract' && (
+        <div>
+          {/* Missing API Key Alert */}
+          {!settingsForm.geminiApiKey && (
+            <div style={{ background: 'rgba(255, 158, 11, 0.1)', border: '1px solid rgba(255, 158, 11, 0.3)', padding: '1rem 1.25rem', borderRadius: 4, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <Key size={18} color="var(--signal-amber)" />
+                <span style={{ fontSize: '0.875rem', color: '#FFF' }}>
+                  <strong>Google Gemini API Key belum diatur.</strong> Tambahkan API Key di Pengaturan agar ekstraksi AI dapat berjalan lancar.
+                </span>
+              </div>
+              <button onClick={() => setActiveView('settings')} className="btn-tactile btn-primary">
+                <Settings size={14} />
+                <span>Buka Pengaturan</span>
               </button>
             </div>
+          )}
 
-            {/* Tab 1 & 2: File Upload (PDF / Image) */}
-            {(activeTab === 'pdf' || activeTab === 'image') && (
-              <div>
-                {!selectedFile ? (
-                  <div 
-                    className={`chassis-dropzone ${isDragging ? 'dragover' : ''}`}
-                    onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-                    onDragLeave={() => setIsDragging(false)}
-                    onDrop={handleFileDrop}
-                    onClick={() => fileInputRef.current?.click()}
+          <div className="split-viewport">
+            {/* Input & Upload Column */}
+            <div className="chassis-card">
+              <div className="chassis-header">
+                <div className="chassis-title">
+                  <FileText size={14} color="var(--signal-amber)" />
+                  <span>Input Sumber Agenda</span>
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-dim)' }}>
+                  Target: {settingsForm.calendarId || 'primary'}
+                </div>
+              </div>
+
+              <div className="chassis-body">
+                {/* Media Type Switcher */}
+                <div className="tab-switcher">
+                  <button 
+                    type="button"
+                    onClick={() => { setInputTab('pdf'); setSelectedFile(null); }}
+                    className={`tab-btn ${inputTab === 'pdf' ? 'active' : ''}`}
                   >
-                    <span className="dropzone-icon">{activeTab === 'pdf' ? '📄' : '🖼️'}</span>
-                    <div className="dropzone-title">
-                      Tarik berkas {activeTab === 'pdf' ? 'Surat PDF' : 'Poster Gambar'} ke sini
-                    </div>
-                    <div className="dropzone-sub">
-                      atau klik untuk memilih ({activeTab === 'pdf' ? '.PDF' : '.JPG, .PNG, .WEBP'})
-                    </div>
+                    <FileText size={14} />
+                    <span>Surat Dinas (PDF)</span>
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => { setInputTab('image'); setSelectedFile(null); }}
+                    className={`tab-btn ${inputTab === 'image' ? 'active' : ''}`}
+                  >
+                    <ImageIcon size={14} />
+                    <span>Poster (Gambar)</span>
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setInputTab('text')}
+                    className={`tab-btn ${inputTab === 'text' ? 'active' : ''}`}
+                  >
+                    <MessageSquare size={14} />
+                    <span>Teks / Broadcast</span>
+                  </button>
+                </div>
+
+                {/* File Dropzone for PDF / Image */}
+                {inputTab !== 'text' ? (
+                  <div>
                     <input 
                       type="file" 
                       ref={fileInputRef} 
-                      style={{ display: 'none' }}
-                      accept={activeTab === 'pdf' ? '.pdf' : 'image/jpeg,image/png,image/webp'}
-                      onChange={handleFileSelect}
+                      onChange={handleFileSelect} 
+                      accept={inputTab === 'pdf' ? '.pdf,application/pdf' : '.jpg,.jpeg,.png,.webp,image/*'}
+                      style={{ display: 'none' }} 
                     />
-                  </div>
-                ) : (
-                  <div className="file-selected-box">
-                    <div>
-                      <div className="file-meta-name">{selectedFile.name}</div>
-                      <div className="file-meta-sub">
-                        {(selectedFile.size / 1024 / 1024).toFixed(2)} MB &bull; {selectedFile.type || 'Berkas Dokumen'}
-                      </div>
-                    </div>
-                    <button 
-                      type="button" 
-                      className="btn-tactile" 
-                      onClick={() => setSelectedFile(null)}
-                      title="Ganti Berkas"
+                    
+                    <div 
+                      className={`dropzone ${isDragging ? 'dragging' : ''}`}
+                      onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                      onDragLeave={() => setIsDragging(false)}
+                      onDrop={handleFileDrop}
+                      onClick={() => fileInputRef.current?.click()}
                     >
-                      <Trash2 size={14} color="var(--signal-red)" /> Hapus
-                    </button>
+                      {selectedFile ? (
+                        <div>
+                          <CheckCircle2 size={36} color="var(--signal-green)" style={{ margin: '0 auto 0.75rem' }} />
+                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', fontWeight: 600, color: '#FFF' }}>
+                            {selectedFile.name}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: 4 }}>
+                            {(selectedFile.size / 1024).toFixed(1)} KB &bull; Klik untuk mengganti berkas
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <div className="dropzone-icon">
+                            {inputTab === 'pdf' ? <FileText size={36} /> : <ImageIcon size={36} />}
+                          </div>
+                          <div style={{ fontWeight: 600, color: '#FFF', marginBottom: 4 }}>
+                            Tarik berkas {inputTab === 'pdf' ? 'PDF Surat Dinas' : 'Poster Flyer'} ke sini
+                          </div>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
+                            atau klik untuk memilih dari komputer Anda (Maksimal 10MB)
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
-
-                {/* Quick Example Loaders */}
-                <div style={{ marginTop: '1.25rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', alignSelf: 'center' }}>
-                    Demo Cepat:
-                  </span>
-                  <button 
-                    type="button" 
-                    className="btn-tactile" 
-                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
-                    onClick={() => {
-                      setActiveTab('text');
-                      setInputText(SAMPLE_TEXT_LETTER);
-                    }}
-                  >
-                    📄 Teks Surat Dinas
-                  </button>
-                  <button 
-                    type="button" 
-                    className="btn-tactile" 
-                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
-                    onClick={() => {
-                      setActiveTab('text');
-                      setInputText(SAMPLE_TEXT_POSTER);
-                    }}
-                  >
-                    🖼️ Teks Poster Bimtek
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Tab 3: Text Input */}
-            {activeTab === 'text' && (
-              <div>
-                <div className="form-field">
-                  <div className="field-label">
-                    <span>Tempel Salinan Pesan WhatsApp / Chat Undangan</span>
-                    <span>{inputText.length} Karakter</span>
-                  </div>
-                  <textarea 
-                    className="chassis-textarea mono"
-                    rows={12}
-                    placeholder="Contoh: Yth. Bapak/Ibu, mengundang rapat koordinasi pada hari Kamis 10 September 2026 pukul 09.00 WIB via Zoom..."
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                  />
-                </div>
-
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button 
-                    type="button" 
-                    className="btn-tactile" 
-                    style={{ fontSize: '0.75rem' }}
-                    onClick={() => setInputText(SAMPLE_TEXT_LETTER)}
-                  >
-                    Muat Contoh Surat Dinas
-                  </button>
-                  <button 
-                    type="button" 
-                    className="btn-tactile" 
-                    style={{ fontSize: '0.75rem' }}
-                    onClick={() => setInputText(SAMPLE_TEXT_POSTER)}
-                  >
-                    Muat Contoh Poster Zoom
-                  </button>
-                  <button 
-                    type="button" 
-                    className="btn-tactile" 
-                    style={{ fontSize: '0.75rem', marginLeft: 'auto' }}
-                    onClick={() => setInputText('')}
-                  >
-                    Bersihkan
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Submit Action */}
-            <div style={{ marginTop: '2rem' }}>
-              <button 
-                type="button" 
-                className="btn-tactile btn-primary"
-                style={{ width: '100%', padding: '0.85rem', fontSize: '0.95rem' }}
-                disabled={isLoading}
-                onClick={handleExtract}
-              >
-                {isLoading ? (
-                  <>
-                    <span className="spinner-chassis"></span>
-                    <span>{statusMessage || 'Mengekstrak Agenda...'}</span>
-                  </>
                 ) : (
-                  <>
-                    <Sparkles size={16} />
-                    <span>Ekstrak Jadwal ke Google Calendar</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* Error Message */}
-            {errorMessage && (
-              <div style={{ 
-                marginTop: '1.25rem', 
-                padding: '0.85rem 1rem', 
-                background: 'rgba(255, 51, 75, 0.1)', 
-                border: '1px solid rgba(255, 51, 75, 0.3)',
-                borderRadius: '2px',
-                color: 'var(--signal-red)',
-                fontSize: '0.85rem',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px'
-              }}>
-                <AlertCircle size={16} />
-                <span>{errorMessage}</span>
-              </div>
-            )}
-
-          </div>
-        </section>
-
-        {/* Right Column: Event Studio & Live Synchronizer */}
-        <section className="chassis-card">
-          <div className="chassis-header">
-            <span>[ 02 / CALENDAR EVENT STUDIO ]</span>
-            {extractedEvent ? (
-              <span style={{ color: 'var(--signal-green)' }}>● EKSTRAKSI SUKSES</span>
-            ) : (
-              <span>MENUNGGU INPUT</span>
-            )}
-          </div>
-
-          <div className="chassis-body">
-            {!extractedEvent ? (
-              <div style={{ 
-                padding: '4rem 1.5rem', 
-                textAlign: 'center', 
-                color: 'var(--text-dim)',
-                background: 'var(--bg-inset)',
-                border: '1px dashed #202732',
-                borderRadius: '2px'
-              }}>
-                <Calendar size={40} style={{ margin: '0 auto 1rem', opacity: 0.35, color: 'var(--signal-amber)' }} />
-                <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', color: 'var(--text-main)', marginBottom: '0.5rem' }}>
-                  Belum Ada Agenda yang Diekstrak
-                </h3>
-                <p style={{ maxWidth: '420px', margin: '0 auto', fontSize: '0.875rem' }}>
-                  Unggah berkas surat dinas PDF, gambar flyer kegiatan, atau tempel pesan chat di panel sebelah kiri untuk memproses secara instan.
-                </p>
-              </div>
-            ) : (
-              <div>
-                
-                {/* Auto-Sync Confirmation Banner */}
-                {autoSyncResult && autoSyncResult.synced && (
-                  <div style={{
-                    background: 'rgba(0, 255, 102, 0.08)',
-                    border: '1px solid rgba(0, 255, 102, 0.3)',
-                    padding: '0.85rem 1rem',
-                    borderRadius: '2px',
-                    color: 'var(--signal-green)',
-                    fontSize: '0.85rem',
-                    marginBottom: '1.25rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: '8px'
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <CheckCircle2 size={16} color="var(--signal-green)" />
-                      <span><strong>Otomatis Tersimpan!</strong> Langsung masuk ke kalender <code>{autoSyncResult.email}</code></span>
-                    </div>
-                    {autoSyncResult.htmlLink && (
-                      <a href={autoSyncResult.htmlLink} target="_blank" rel="noopener noreferrer" style={{ color: '#FFF', textDecoration: 'underline', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>
-                        Buka di Kalender &rarr;
-                      </a>
-                    )}
-                  </div>
-                )}
-
-                {/* Event Title */}
-                <div className="form-field">
-                  <div className="field-label">
-                    <span>Judul / Topik Agenda</span>
-                    <span className="status-badge-tag badge-online">
-                      {extractedEvent.is_online ? '🌐 DARING / ZOOM' : '🏢 LURING / OFFLINE'}
-                    </span>
-                  </div>
-                  <input 
-                    type="text" 
-                    className="chassis-input"
-                    style={{ fontSize: '1.05rem', fontWeight: 600 }}
-                    value={extractedEvent.title}
-                    onChange={(e) => {
-                      const updated = { ...extractedEvent, title: e.target.value };
-                      updated.google_calendar_url = buildGoogleCalendarUrl(updated);
-                      setExtractedEvent(updated);
-                    }}
-                  />
-                </div>
-
-                {/* Time Matrix */}
-                <div className="time-matrix-grid">
-                  <div className="matrix-cell">
-                    <div className="matrix-label"><Clock size={11} style={{ display: 'inline', marginRight: 4 }} /> Mulai (WIB)</div>
-                    <input 
-                      type="datetime-local" 
-                      className="chassis-input mono"
-                      style={{ padding: '0.35rem 0.5rem', fontSize: '0.85rem' }}
-                      value={DateTime.fromISO(extractedEvent.start_time).setZone('Asia/Jakarta').toFormat("yyyy-MM-dd'T'HH:mm")}
-                      onChange={(e) => {
-                        const newIso = DateTime.fromISO(e.target.value, { zone: 'Asia/Jakarta' }).toISO();
-                        if (newIso) {
-                          const updated = { ...extractedEvent, start_time: newIso };
-                          updated.google_calendar_url = buildGoogleCalendarUrl(updated);
-                          setExtractedEvent(updated);
-                        }
-                      }}
-                    />
-                  </div>
-
-                  <div className="matrix-cell">
-                    <div className="matrix-label"><Clock size={11} style={{ display: 'inline', marginRight: 4 }} /> Selesai (WIB)</div>
-                    <input 
-                      type="datetime-local" 
-                      className="chassis-input mono"
-                      style={{ padding: '0.35rem 0.5rem', fontSize: '0.85rem' }}
-                      value={DateTime.fromISO(extractedEvent.end_time).setZone('Asia/Jakarta').toFormat("yyyy-MM-dd'T'HH:mm")}
-                      onChange={(e) => {
-                        const newIso = DateTime.fromISO(e.target.value, { zone: 'Asia/Jakarta' }).toISO();
-                        if (newIso) {
-                          const updated = { ...extractedEvent, end_time: newIso };
-                          updated.google_calendar_url = buildGoogleCalendarUrl(updated);
-                          setExtractedEvent(updated);
-                        }
-                      }}
-                    />
-                  </div>
-                </div>
-
-                {/* Location & Meeting */}
-                <div className="form-field">
-                  <div className="field-label">
-                    <span><MapPin size={11} style={{ display: 'inline', marginRight: 4 }} /> Lokasi / Ruang / Platform</span>
-                  </div>
-                  <input 
-                    type="text" 
-                    className="chassis-input"
-                    value={extractedEvent.location}
-                    onChange={(e) => {
-                      const updated = { ...extractedEvent, location: e.target.value };
-                      updated.google_calendar_url = buildGoogleCalendarUrl(updated);
-                      setExtractedEvent(updated);
-                    }}
-                  />
-                </div>
-
-                {/* Zoom Credentials Drawer (if available) */}
-                {(extractedEvent.meeting_link || extractedEvent.meeting_id_pass) && (
-                  <div style={{ 
-                    background: 'var(--bg-inset)', 
-                    border: 'var(--border-chassis)', 
-                    padding: '0.85rem 1rem', 
-                    borderRadius: '2px',
-                    marginBottom: '1.25rem'
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--signal-blue)', textTransform: 'uppercase' }}>
-                        <Video size={11} style={{ display: 'inline', marginRight: 4 }} /> Akses Pertemuan Virtual
-                      </span>
-                    </div>
-
-                    {extractedEvent.meeting_link && (
-                      <div style={{ fontSize: '0.82rem', wordBreak: 'break-all', marginBottom: '0.35rem' }}>
-                        <a href={extractedEvent.meeting_link} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--signal-blue)', textDecoration: 'none' }}>
-                          {extractedEvent.meeting_link} &rarr;
-                        </a>
+                  <div>
+                    {/* Text Input Area */}
+                    <div className="form-group">
+                      <div className="form-label">
+                        <span>Pesan Chat / Broadcast Undangan</span>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <button 
+                            type="button" 
+                            onClick={() => setInputText(SAMPLE_TEXT_LETTER)} 
+                            style={{ background: 'none', border: 'none', color: 'var(--signal-amber)', fontFamily: 'var(--font-mono)', fontSize: '0.7rem', cursor: 'pointer' }}
+                          >
+                            Contoh Surat
+                          </button>
+                          <button 
+                            type="button" 
+                            onClick={() => setInputText(SAMPLE_TEXT_POSTER)} 
+                            style={{ background: 'none', border: 'none', color: 'var(--signal-amber)', fontFamily: 'var(--font-mono)', fontSize: '0.7rem', cursor: 'pointer' }}
+                          >
+                            Contoh Poster
+                          </button>
+                        </div>
                       </div>
-                    )}
-
-                    {extractedEvent.meeting_id_pass && (
-                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--text-dim)' }}>
-                        {extractedEvent.meeting_id_pass}
-                      </div>
-                    )}
+                      <textarea 
+                        className="form-control"
+                        rows={10}
+                        value={inputText}
+                        onChange={(e) => setInputText(e.target.value)}
+                        placeholder="Tempelkan isi surat dinas, flyer kegiatan, atau broadcast pesan WhatsApp di sini..."
+                        style={{ resize: 'vertical' }}
+                      />
+                    </div>
                   </div>
                 )}
 
-                {/* Badges: JP & Speakers */}
-                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
-                  {extractedEvent.jp && (
-                    <div className="status-badge-tag" style={{ background: 'rgba(255, 158, 11, 0.1)', color: 'var(--signal-amber)' }}>
-                      <BookOpen size={11} /> {extractedEvent.jp}
-                    </div>
-                  )}
-                  {extractedEvent.speakers && (
-                    <div className="status-badge-tag" style={{ background: 'rgba(0, 255, 102, 0.1)', color: 'var(--signal-green)' }}>
-                      <Users size={11} /> {extractedEvent.speakers}
-                    </div>
-                  )}
-                </div>
-
-                {/* Description */}
-                <div className="form-field">
-                  <div className="field-label">
-                    <span>Rangkuman Agenda & Nomor Surat</span>
+                {/* Error Banner */}
+                {errorMessage && (
+                  <div style={{ marginTop: '1rem', background: 'rgba(255, 51, 75, 0.1)', border: '1px solid rgba(255, 51, 75, 0.3)', padding: '0.85rem 1rem', borderRadius: 3, display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--signal-red)', fontSize: '0.8125rem' }}>
+                    <AlertCircle size={16} />
+                    <span>{errorMessage}</span>
                   </div>
-                  <textarea 
-                    className="chassis-textarea"
-                    rows={4}
-                    value={extractedEvent.description}
-                    onChange={(e) => {
-                      const updated = { ...extractedEvent, description: e.target.value };
-                      updated.google_calendar_url = buildGoogleCalendarUrl(updated);
-                      setExtractedEvent(updated);
-                    }}
-                  />
-                </div>
+                )}
 
-                {/* Primary Action Dock */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1.5rem' }}>
-                  
-                  {/* Big Google Calendar Button */}
-                  <a 
-                    href={extractedEvent.google_calendar_url || '#'}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                {/* Extract Action Button */}
+                <div style={{ marginTop: '1.5rem' }}>
+                  <button 
+                    onClick={handleExtract}
+                    disabled={isLoading}
                     className="btn-tactile btn-primary"
-                    style={{ padding: '0.85rem', fontSize: '0.95rem', justifyContent: 'center' }}
+                    style={{ width: '100%', padding: '0.85rem 1rem', fontSize: '0.9rem' }}
                   >
-                    <Calendar size={18} />
-                    <span>Buka & Simpan di Google Calendar</span>
-                    <ExternalLink size={14} />
-                  </a>
-
-                  {/* Secondary Export Actions */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                    <button 
-                      type="button" 
-                      className="btn-tactile"
-                      onClick={handleDownloadIcs}
-                    >
-                      <Download size={14} /> Unduh File .ICS
-                    </button>
-                    <button 
-                      type="button" 
-                      className="btn-tactile"
-                      onClick={handleCopyBroadcast}
-                    >
-                      {copyFeedback ? <Check size={14} color="var(--signal-green)" /> : <Copy size={14} />}
-                      {copyFeedback || 'Salin Teks WA'}
-                    </button>
-                  </div>
-
-                </div>
-
-              </div>
-            )}
-          </div>
-        </section>
-
-      </main>
-
-      {/* BYOK API Key Modal */}
-      {isKeyModalOpen && (
-        <div className="modal-backdrop" onClick={() => setIsKeyModalOpen(false)}>
-          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <span>[ KONFIGURASI GOOGLE GEMINI API KEY ]</span>
-              <button 
-                type="button" 
-                style={{ background: 'transparent', border: 'none', color: 'var(--text-dim)', cursor: 'pointer' }}
-                onClick={() => setIsKeyModalOpen(false)}
-              >
-                ✕
-              </button>
-            </div>
-            <div className="modal-body">
-              <p style={{ color: 'var(--text-dim)', fontSize: '0.875rem', marginBottom: '1.25rem' }}>
-                Layanan ini bersifat <strong>Public Serverless & Free (BYOK)</strong>. Kunci API Anda disimpan secara lokal di browser (localStorage) dan tidak pernah disimpan di database server.
-              </p>
-
-              <div className="form-field">
-                <label className="field-label">Google Gemini API Key</label>
-                <input 
-                  type="password"
-                  className="chassis-input mono"
-                  placeholder="AIzaSy..."
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                />
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: '0.5rem' }}>
-                  Belum punya API key? <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--signal-amber)' }}>Dapatkan gratis di Google AI Studio &rarr;</a>
-                </div>
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button 
-                type="button" 
-                className="btn-tactile"
-                onClick={() => setIsKeyModalOpen(false)}
-              >
-                Batal
-              </button>
-              <button 
-                type="button" 
-                className="btn-tactile btn-primary"
-                onClick={() => handleSaveApiKey(apiKey)}
-              >
-                Simpan Kunci
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Telegram Bot Setup Modal */}
-      {isTelegramModalOpen && (
-        <div className="modal-backdrop" onClick={() => setIsTelegramModalOpen(false)}>
-          <div className="modal-dialog" style={{ maxWidth: '640px' }} onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <span>[ INTEGRASI TELEGRAM BOT WEBHOOK ]</span>
-              <button 
-                type="button" 
-                style={{ background: 'transparent', border: 'none', color: 'var(--text-dim)', cursor: 'pointer' }}
-                onClick={() => setIsTelegramModalOpen(false)}
-              >
-                ✕
-              </button>
-            </div>
-            <div className="modal-body">
-              <p style={{ color: 'var(--text-dim)', fontSize: '0.875rem', marginBottom: '1.25rem' }}>
-                Jadikan Telegram Bot Anda asisten otomatis: kirim PDF surat dinas, flyer kegiatan, atau pesan chat ke bot Telegram Anda, dan bot akan langsung membalas dengan ringkasan & tombol <strong>Google Calendar</strong>!
-              </p>
-
-              {/* Bot Token Input */}
-              <div className="form-field">
-                <div className="field-label">
-                  <span>1. Telegram Bot Token</span>
-                  <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--signal-amber)', textDecoration: 'none' }}>
-                    Dapatkan di @BotFather &rarr;
-                  </a>
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <input 
-                    type="password"
-                    className="chassis-input mono"
-                    placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz..."
-                    value={tgBotToken}
-                    onChange={(e) => setTgBotToken(e.target.value)}
-                  />
-                  <button 
-                    type="button" 
-                    className="btn-tactile"
-                    style={{ whiteSpace: 'nowrap' }}
-                    onClick={handleCheckBotInfo}
-                  >
-                    Verifikasi
+                    {isLoading ? (
+                      <>
+                        <span className="spinner-chassis"></span>
+                        <span>{statusMessage || 'Mengekstrak Agenda...'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={16} />
+                        <span>Mulai Ekstraksi AI & Jadwalkan</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
+            </div>
 
-              {/* Public HTTPS Domain / Vercel URL */}
-              <div className="form-field" style={{ marginTop: '1rem' }}>
-                <div className="field-label">
-                  <span>2. Domain Publik HTTPS (Vercel / Ngrok)</span>
-                  <span style={{ color: 'var(--signal-amber)' }}>Wajib HTTPS</span>
+            {/* Extracted Calendar Output Column */}
+            <div className="chassis-card">
+              <div className="chassis-header">
+                <div className="chassis-title">
+                  <Calendar size={14} color="var(--signal-green)" />
+                  <span>Hasil Agenda & Google Calendar</span>
                 </div>
-                <input 
-                  type="text"
-                  className="chassis-input mono"
-                  placeholder="https://easygooglecalendar.alfarighilmana.my.id"
-                  value={tgCustomUrl}
-                  onChange={(e) => setTgCustomUrl(e.target.value)}
-                />
-                
-                {/* Localhost notice */}
-                {typeof window !== 'undefined' && window.location.origin.includes('localhost') && (
-                  <div style={{ 
-                    marginTop: '0.5rem', 
-                    padding: '0.65rem 0.85rem', 
-                    background: 'rgba(255, 158, 11, 0.08)', 
-                    border: '1px solid rgba(255, 158, 11, 0.25)',
-                    borderRadius: '2px',
-                    fontSize: '0.75rem',
-                    color: 'var(--signal-amber)',
-                    lineHeight: 1.5
-                  }}>
-                    ⚠️ <strong>Anda sedang di Localhost (HTTP):</strong> Telegram Bot API mewajibkan URL dengan protokol <code>https://</code> publik. Silakan deploy ke Vercel (contoh: <code>https://project-anda.vercel.app</code>) atau gunakan tunnel (<code>npx ngrok http 3000</code>), lalu masukkan URL HTTPS tersebut di atas.
-                  </div>
+                {extractedEvent && (
+                  <span className="status-badge-tag badge-success">
+                    <CheckCircle2 size={12} />
+                    <span>Berhasil Diekstrak</span>
+                  </span>
                 )}
               </div>
 
-              {/* Status Message */}
-              {tgStatus.error && (
-                <div style={{ 
-                  marginTop: '1rem', 
-                  padding: '0.65rem 0.85rem', 
-                  background: 'rgba(255, 51, 75, 0.1)', 
-                  border: '1px solid rgba(255, 51, 75, 0.3)',
-                  borderRadius: '2px',
-                  color: 'var(--signal-red)', 
-                  fontSize: '0.8rem' 
-                }}>
-                  ❌ {tgStatus.error}
-                </div>
-              )}
-              {tgStatus.info && (
-                <div style={{ 
-                  marginTop: '1rem', 
-                  padding: '0.65rem 0.85rem', 
-                  background: 'rgba(0, 255, 102, 0.1)', 
-                  border: '1px solid rgba(0, 255, 102, 0.3)',
-                  borderRadius: '2px',
-                  color: 'var(--signal-green)', 
-                  fontSize: '0.8rem' 
-                }}>
-                  ✅ {tgStatus.info}
-                </div>
-              )}
+              <div className="chassis-body">
+                {extractedEvent ? (
+                  <div>
+                    {/* Auto Sync Notification Banner */}
+                    {autoSyncResult?.synced && (
+                      <div style={{ background: 'rgba(0, 255, 102, 0.1)', border: '1px solid rgba(0, 255, 102, 0.3)', padding: '0.85rem 1rem', borderRadius: 3, marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                          <CheckCircle2 size={16} color="var(--signal-green)" />
+                          <span style={{ fontSize: '0.8125rem', color: '#FFF' }}>
+                            Otomatis tersimpan ke Google Calendar <strong>({autoSyncResult.email})</strong>
+                          </span>
+                        </div>
+                        {autoSyncResult.htmlLink && (
+                          <a 
+                            href={autoSyncResult.htmlLink} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="btn-tactile btn-success"
+                            style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}
+                          >
+                            <ExternalLink size={12} />
+                            <span>Buka Event</span>
+                          </a>
+                        )}
+                      </div>
+                    )}
 
-              <div style={{ 
-                background: 'var(--bg-inset)', 
-                border: 'var(--border-chassis)', 
-                padding: '0.85rem', 
-                borderRadius: '2px', 
-                marginTop: '1.25rem',
-                fontSize: '0.75rem',
-                fontFamily: 'var(--font-mono)',
-                color: 'var(--text-dim)'
-              }}>
-                <div style={{ color: 'var(--signal-amber)', marginBottom: '0.25rem' }}>TARGET WEBHOOK ENDPOINT:</div>
-                <div style={{ color: 'var(--text-main)', wordBreak: 'break-all' }}>
-                  <code>POST {(tgCustomUrl || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/$/, '')}/api/telegram/webhook?bot_token=...&gemini_key=...</code>
-                </div>
+                    {/* Title */}
+                    <div style={{ marginBottom: '1.25rem' }}>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--text-faint)', textTransform: 'uppercase', marginBottom: 4 }}>
+                        Nama Kegiatan / Agenda
+                      </div>
+                      <h2 style={{ fontSize: '1.3rem', fontWeight: 700, color: '#FFF', lineHeight: 1.3 }}>
+                        {extractedEvent.title}
+                      </h2>
+                    </div>
+
+                    {/* Matrix Grid */}
+                    <div className="matrix-grid" style={{ marginBottom: '1.25rem' }}>
+                      <div className="matrix-item">
+                        <div className="matrix-label">
+                          <Clock size={12} style={{ display: 'inline', marginRight: 4 }} />
+                          Waktu Mulai (WIB)
+                        </div>
+                        <div className="matrix-value">
+                          {DateTime.fromISO(extractedEvent.start_time).setZone('Asia/Jakarta').toFormat('dd MMM yyyy, HH:mm')} WIB
+                        </div>
+                      </div>
+
+                      <div className="matrix-item">
+                        <div className="matrix-label">
+                          <Clock size={12} style={{ display: 'inline', marginRight: 4 }} />
+                          Waktu Selesai (WIB)
+                        </div>
+                        <div className="matrix-value">
+                          {DateTime.fromISO(extractedEvent.end_time).setZone('Asia/Jakarta').toFormat('dd MMM yyyy, HH:mm')} WIB
+                        </div>
+                      </div>
+
+                      <div className="matrix-item">
+                        <div className="matrix-label">
+                          <MapPin size={12} style={{ display: 'inline', marginRight: 4 }} />
+                          Lokasi / Tempat
+                        </div>
+                        <div className="matrix-value">
+                          {extractedEvent.location || (extractedEvent.is_online ? 'Daring (Online Zoom/Meet)' : 'Tidak tercantum')}
+                        </div>
+                      </div>
+
+                      <div className="matrix-item">
+                        <div className="matrix-label">
+                          <BookOpen size={12} style={{ display: 'inline', marginRight: 4 }} />
+                          Bobot Sertifikat / JP
+                        </div>
+                        <div className="matrix-value">
+                          {extractedEvent.jp || '-'}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Online Meeting Credentials */}
+                    {extractedEvent.is_online && (extractedEvent.meeting_link || extractedEvent.meeting_id_pass) && (
+                      <div style={{ background: 'var(--bg-inset)', border: 'var(--border-chassis)', padding: '1rem', borderRadius: 3, marginBottom: '1.25rem' }}>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--signal-blue)', fontWeight: 600, marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Video size={14} />
+                          <span>AKSES VIRTUAL MEETING</span>
+                        </div>
+                        {extractedEvent.meeting_link && (
+                          <div style={{ marginBottom: 6, wordBreak: 'break-all', fontSize: '0.85rem' }}>
+                            <span style={{ color: 'var(--text-dim)' }}>Link: </span>
+                            <a href={extractedEvent.meeting_link} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--signal-blue)' }}>
+                              {extractedEvent.meeting_link}
+                            </a>
+                          </div>
+                        )}
+                        {extractedEvent.meeting_id_pass && (
+                          <div style={{ fontSize: '0.85rem', color: '#FFF' }}>
+                            <span style={{ color: 'var(--text-dim)' }}>Kredensial: </span>
+                            {extractedEvent.meeting_id_pass}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Speakers */}
+                    {extractedEvent.speakers && (
+                      <div style={{ marginBottom: '1.25rem' }}>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--text-faint)', textTransform: 'uppercase', marginBottom: 4 }}>
+                          Narasumber / Keynote Speaker
+                        </div>
+                        <div style={{ fontSize: '0.875rem', color: 'var(--text-main)' }}>
+                          {extractedEvent.speakers}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Description */}
+                    {extractedEvent.description && (
+                      <div style={{ marginBottom: '1.5rem' }}>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--text-faint)', textTransform: 'uppercase', marginBottom: 4 }}>
+                          Rincian Agenda
+                        </div>
+                        <div style={{ fontSize: '0.85rem', color: 'var(--text-dim)', whiteSpace: 'pre-wrap', lineHeight: 1.6, background: 'var(--bg-inset)', padding: '0.75rem', borderRadius: 3, border: 'var(--border-chassis)' }}>
+                          {extractedEvent.description}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Action Buttons */}
+                    <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                      <a 
+                        href={buildGoogleCalendarUrl(extractedEvent)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn-tactile btn-primary"
+                      >
+                        <Calendar size={14} />
+                        <span>Buka di Google Calendar</span>
+                      </a>
+
+                      <button onClick={handleDownloadICS} className="btn-tactile">
+                        <Download size={14} />
+                        <span>Unduh .ICS</span>
+                      </button>
+
+                      <button 
+                        onClick={() => handleCopyText(extractedEvent.title + '\n' + extractedEvent.description, 'agenda')}
+                        className="btn-tactile"
+                      >
+                        {copyFeedback === 'agenda' ? <Check size={14} color="var(--signal-green)" /> : <Copy size={14} />}
+                        <span>{copyFeedback === 'agenda' ? 'Disalin!' : 'Salin Teks'}</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '4rem 1.5rem', color: 'var(--text-faint)' }}>
+                    <Calendar size={48} style={{ opacity: 0.3, margin: '0 auto 1rem' }} />
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--text-dim)', marginBottom: '0.5rem' }}>
+                      BELUM ADA AGENDA DIEKSTRAK
+                    </div>
+                    <p style={{ fontSize: '0.8125rem', maxWidth: 360, margin: '0 auto' }}>
+                      Unggah surat dinas PDF, poster flyer, atau masukkan teks undangan di sebelah kiri untuk melihat hasil ekstraksi dan sinkronisasi otomatis ke Google Calendar.
+                    </p>
+                  </div>
+                )}
               </div>
-            </div>
-            <div className="modal-footer">
-              <button 
-                type="button" 
-                className="btn-tactile"
-                onClick={handleDeleteTelegramWebhook}
-                style={{ color: 'var(--signal-red)', marginRight: 'auto' }}
-                title="Hapus webhook yang terpasang di Telegram"
-              >
-                Hapus Webhook
-              </button>
-              <button 
-                type="button" 
-                className="btn-tactile"
-                onClick={() => setIsTelegramModalOpen(false)}
-              >
-                Tutup
-              </button>
-              <button 
-                type="button" 
-                className="btn-tactile btn-primary"
-                disabled={tgStatus.loading}
-                onClick={handleSetTelegramWebhook}
-              >
-                {tgStatus.loading ? 'Menghubungkan...' : 'Set Webhook Otomatis'}
-              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* API Documentation Modal */}
-      {isApiDocsOpen && (
-        <div className="modal-backdrop" onClick={() => setIsApiDocsOpen(false)}>
-          <div className="modal-dialog" style={{ maxWidth: '720px' }} onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <span>[ REST API & n8n INTEGRATION GUIDE ]</span>
-              <button 
-                type="button" 
-                style={{ background: 'transparent', border: 'none', color: 'var(--text-dim)', cursor: 'pointer' }}
-                onClick={() => setIsApiDocsOpen(false)}
-              >
-                ✕
-              </button>
+      {/* ----------------------------------------------------
+          TAB 2: PENGATURAN & KREDENSIAL (SETTINGS)
+          ---------------------------------------------------- */}
+      {activeView === 'settings' && (
+        <div style={{ maxWidth: 840, margin: '0 auto' }}>
+          <div className="chassis-card">
+            <div className="chassis-header">
+              <div className="chassis-title">
+                <Settings size={14} color="var(--signal-amber)" />
+                <span>Pengaturan Akun & Kredensial (Neon PostgreSQL)</span>
+              </div>
+              <div className="status-badge-tag badge-online">
+                <Database size={12} />
+                <span>{dbStatus?.connected ? 'Neon DB Terhubung' : 'Penyimpanan Lokal'}</span>
+              </div>
             </div>
-            <div className="modal-body">
-              <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem', marginBottom: '1rem' }}>
-                Endpoint publik serverless ini dapat dipanggil langsung dari cURL, n8n HTTP Request node, Python, atau aplikasi frontend lainnya:
+
+            <div className="chassis-body">
+              {/* Settings Notification */}
+              {settingsStatus && (
+                <div style={{ 
+                  background: settingsStatus.type === 'success' ? 'rgba(0, 255, 102, 0.1)' : 'rgba(255, 51, 75, 0.1)',
+                  border: `1px solid ${settingsStatus.type === 'success' ? 'rgba(0, 255, 102, 0.3)' : 'rgba(255, 51, 75, 0.3)'}`,
+                  color: settingsStatus.type === 'success' ? 'var(--signal-green)' : 'var(--signal-red)',
+                  padding: '0.875rem 1.25rem',
+                  borderRadius: 3,
+                  marginBottom: '1.5rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.6rem',
+                  fontSize: '0.875rem'
+                }}>
+                  {settingsStatus.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+                  <span>{settingsStatus.message}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleSaveSettings}>
+                {/* 1. Google Gemini API Key */}
+                <div className="form-group">
+                  <div className="form-label">
+                    <span>Google Gemini API Key (BYOK) *</span>
+                    <a 
+                      href="https://aistudio.google.com/app/apikey" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      style={{ color: 'var(--signal-amber)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
+                    >
+                      <span>Dapatkan API Key Gratis</span>
+                      <ExternalLink size={11} />
+                    </a>
+                  </div>
+                  <div style={{ position: 'relative' }}>
+                    <input 
+                      type={showApiKey ? 'text' : 'password'}
+                      className="form-control"
+                      value={settingsForm.geminiApiKey}
+                      onChange={(e) => setSettingsForm({ ...settingsForm, geminiApiKey: e.target.value })}
+                      placeholder="AIzaSy..."
+                      style={{ paddingRight: '2.5rem' }}
+                    />
+                    <button 
+                      type="button"
+                      onClick={() => setShowApiKey(!showApiKey)}
+                      style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer' }}
+                    >
+                      {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginTop: 4 }}>
+                    API Key tersimpan aman di database Neon PostgreSQL dan hanya digunakan untuk akun Anda.
+                  </div>
+                </div>
+
+                {/* 2. Model Selection & OCR Engine */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div className="form-group">
+                    <div className="form-label">
+                      <span>Model AI Gemini</span>
+                    </div>
+                    <select 
+                      className="form-control"
+                      value={settingsForm.modelName}
+                      onChange={(e) => setSettingsForm({ ...settingsForm, modelName: e.target.value })}
+                    >
+                      <option value="gemini-3.6-flash">Gemini 3.6 Flash (Direkomendasikan)</option>
+                      <option value="gemini-2.5-flash">Gemini 2.5 Flash (Cepat)</option>
+                      <option value="gemini-1.5-pro">Gemini 1.5 Pro (Penalaran Kompleks)</option>
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <div className="form-label">
+                      <span>OCR Engine Pipeline</span>
+                    </div>
+                    <select 
+                      className="form-control"
+                      value={settingsForm.ocrEngine}
+                      onChange={(e) => setSettingsForm({ ...settingsForm, ocrEngine: e.target.value })}
+                    >
+                      <option value="gemini">Gemini Multimodal Vision (Bawaan)</option>
+                      <option value="ocr_service">Custom OCR Endpoint</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* 3. Target Calendar ID */}
+                <div className="form-group">
+                  <div className="form-label">
+                    <span>Target Google Calendar ID</span>
+                  </div>
+                  <input 
+                    type="text"
+                    className="form-control"
+                    value={settingsForm.calendarId}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, calendarId: e.target.value })}
+                    placeholder="primary atau c_xxxx@group.calendar.google.com"
+                  />
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginTop: 4 }}>
+                    Gunakan <code>primary</code> untuk kalender utama akun Anda, atau masukkan Calendar ID kalender tim/kantor.
+                  </div>
+                </div>
+
+                {/* 4. Telegram Bot Token */}
+                <div className="form-group">
+                  <div className="form-label">
+                    <span>Telegram Bot Token (Opsional)</span>
+                    <span style={{ color: 'var(--text-faint)' }}>Dari @BotFather</span>
+                  </div>
+                  <input 
+                    type="text"
+                    className="form-control"
+                    value={settingsForm.telegramBotToken}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, telegramBotToken: e.target.value })}
+                    placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+                  />
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginTop: 4 }}>
+                    Diperlukan jika Anda ingin bot Telegram sendiri yang langsung terhubung ke aplikasi Anda.
+                  </div>
+                </div>
+
+                {/* Save Button */}
+                <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end' }}>
+                  <button 
+                    type="submit" 
+                    disabled={isSavingSettings}
+                    className="btn-tactile btn-primary"
+                    style={{ padding: '0.85rem 1.75rem', fontSize: '0.9rem' }}
+                  >
+                    {isSavingSettings ? (
+                      <>
+                        <span className="spinner-chassis"></span>
+                        <span>Menyimpan ke Database...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Check size={16} />
+                        <span>Simpan Konfigurasi</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ----------------------------------------------------
+          TAB 3: INTEGRASI TELEGRAM BOT
+          ---------------------------------------------------- */}
+      {activeView === 'telegram' && (
+        <div style={{ maxWidth: 840, margin: '0 auto' }}>
+          <div className="chassis-card">
+            <div className="chassis-header">
+              <div className="chassis-title">
+                <Bot size={14} color="var(--signal-blue)" />
+                <span>Integrasi Bot Telegram & Webhook</span>
+              </div>
+            </div>
+
+            <div className="chassis-body">
+              <p style={{ fontSize: '0.875rem', color: 'var(--text-dim)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
+                Dengan menghubungkan Bot Telegram, Anda cukup mengirim dokumen surat dinas PDF, foto poster, atau meneruskan pesan chat undangan ke bot di Telegram. Agenda akan otomatis diekstrak dan dijadwalkan ke Google Calendar Anda secara <strong>0-Click</strong>.
               </p>
 
-              <div style={{ 
-                background: 'var(--bg-inset)', 
-                border: 'var(--border-chassis)', 
-                padding: '1rem', 
-                borderRadius: '2px', 
-                fontSize: '0.78rem', 
-                fontFamily: 'var(--font-mono)',
-                color: 'var(--text-main)',
-                overflowX: 'auto',
-                lineHeight: 1.6
-              }}>
-                <div style={{ color: 'var(--signal-amber)' }}># 1. Ekstraksi Dokumen PDF / Gambar (Multipart):</div>
-                {`curl -X POST "${typeof window !== 'undefined' ? window.location.origin : ''}/api/extract" \\
-  -H "x-api-key: YOUR_GEMINI_API_KEY" \\
-  -F "file=@/path/to/undangan.pdf"`}
-
-                <div style={{ color: 'var(--signal-amber)', marginTop: '1.25rem' }}># 2. Ekstraksi Pesan Chat Teks (JSON):</div>
-                {`curl -X POST "${typeof window !== 'undefined' ? window.location.origin : ''}/api/extract" \\
-  -H "Content-Type: application/json" \\
-  -H "x-api-key: YOUR_GEMINI_API_KEY" \\
-  -d '{
-    "sourceType": "text",
-    "text": "Undangan Rapat Evaluasi pada hari Kamis 10 Sept 2026 jam 09.00 WIB..."
-  }'`}
+              <div style={{ background: 'var(--bg-inset)', border: 'var(--border-chassis)', padding: '1.25rem', borderRadius: 4, marginBottom: '1.5rem' }}>
+                <h4 style={{ fontSize: '0.9rem', fontWeight: 600, color: '#FFF', marginBottom: '0.75rem' }}>
+                  Langkah-Langkah Pemasangan:
+                </h4>
+                <ol style={{ paddingLeft: '1.25rem', fontSize: '0.85rem', color: 'var(--text-dim)', lineHeight: 1.8 }}>
+                  <li>Buka Telegram dan buat bot baru melalui <strong>@BotFather</strong> dengan perintah <code>/newbot</code>.</li>
+                  <li>Salin <strong>HTTP API Bot Token</strong> dan tempelkan ke form di tab <strong>Pengaturan & Kredensial</strong>.</li>
+                  <li>Klik tombol <strong>"Pasang Webhook Otomatis"</strong> di bawah ini.</li>
+                  <li>Mulai chat dengan bot Anda dan ketik <code>/connect</code> untuk menghubungkan akun Google Calendar Anda!</li>
+                </ol>
               </div>
-            </div>
-            <div className="modal-footer">
-              <button 
-                type="button" 
-                className="btn-tactile"
-                onClick={() => setIsApiDocsOpen(false)}
-              >
-                Tutup
-              </button>
+
+              {/* Webhook Status */}
+              {tgStatus.info && (
+                <div style={{ background: 'rgba(0, 255, 102, 0.1)', border: '1px solid rgba(0, 255, 102, 0.3)', padding: '0.85rem 1rem', borderRadius: 3, marginBottom: '1.25rem', color: 'var(--signal-green)', fontSize: '0.85rem', whiteSpace: 'pre-wrap' }}>
+                  {tgStatus.info}
+                </div>
+              )}
+              {tgStatus.error && (
+                <div style={{ background: 'rgba(255, 51, 75, 0.1)', border: '1px solid rgba(255, 51, 75, 0.3)', padding: '0.85rem 1rem', borderRadius: 3, marginBottom: '1.25rem', color: 'var(--signal-red)', fontSize: '0.85rem' }}>
+                  {tgStatus.error}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <button 
+                  onClick={handleSetupTelegramWebhook}
+                  disabled={tgStatus.loading}
+                  className="btn-tactile btn-primary"
+                >
+                  {tgStatus.loading ? <span className="spinner-chassis"></span> : <Send size={14} />}
+                  <span>Pasang Webhook Otomatis</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Footer */}
-      <footer style={{ 
-        marginTop: '4rem', 
-        borderTop: 'var(--border-chassis)', 
-        paddingTop: '1.5rem', 
-        display: 'flex', 
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: '1rem',
-        fontSize: '0.75rem',
-        fontFamily: 'var(--font-mono)',
-        color: 'var(--text-dim)'
-      }}>
-        <div>EasyCal // Kemnaker RI &bull; Powered by Google Gemini AI & ocr.alfarighilmana.my.id</div>
-        <div>Zero-Retention Serverless Engine &bull; Ready for Vercel Deployment</div>
-      </footer>
+      {/* ----------------------------------------------------
+          TAB 4: PANDUAN & DOKUMENTASI API
+          ---------------------------------------------------- */}
+      {activeView === 'docs' && (
+        <div style={{ maxWidth: 840, margin: '0 auto' }}>
+          <div className="chassis-card">
+            <div className="chassis-header">
+              <div className="chassis-title">
+                <Code2 size={14} color="var(--signal-amber)" />
+                <span>Dokumentasi API & Integrasi Eksternal</span>
+              </div>
+            </div>
 
-    </div>
+            <div className="chassis-body" style={{ fontSize: '0.875rem', color: 'var(--text-dim)', lineHeight: 1.7 }}>
+              <h4 style={{ color: '#FFF', fontSize: '1rem', marginBottom: '0.5rem' }}>
+                1. Endpoint Ekstraksi Agenda (POST <code>/api/extract</code>)
+              </h4>
+              <p style={{ marginBottom: '1rem' }}>
+                Mendukung <code>multipart/form-data</code> (unggah file PDF / Gambar) dan <code>application/json</code> (teks undangan).
+              </p>
+
+              <pre style={{ background: 'var(--bg-inset)', border: 'var(--border-chassis)', padding: '1rem', borderRadius: 4, fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--signal-amber)', overflowX: 'auto', marginBottom: '1.5rem' }}>
+{`curl -X POST "${typeof window !== 'undefined' ? window.location.origin : ''}/api/extract" \\
+  -F "file=@surat_undangan.pdf" \\
+  -F "apiKey=YOUR_GEMINI_API_KEY" \\
+  -F "autoSync=true"`}
+              </pre>
+
+              <h4 style={{ color: '#FFF', fontSize: '1rem', marginBottom: '0.5rem' }}>
+                2. Endpoint Status Otorisasi (GET <code>/api/auth/me</code>)
+              </h4>
+              <p>
+                Mengembalikan status sesi autentikasi, detail profil user Google, status kalender, dan koneksi database Neon PostgreSQL.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+    </main>
   );
 }

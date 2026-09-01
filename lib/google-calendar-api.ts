@@ -6,7 +6,11 @@ import { getUserGoogleAuth, saveUserGoogleAuth } from './token-store';
 /**
  * Inserts an event directly into a user's Google Calendar using their stored refresh_token
  */
-export async function insertGoogleCalendarEvent(userId: string | number, event: CalendarEvent): Promise<{
+export async function insertGoogleCalendarEvent(
+  userId: string | number,
+  event: CalendarEvent,
+  customCalendarId?: string
+): Promise<{
   success: boolean;
   htmlLink?: string;
   eventId?: string;
@@ -70,8 +74,10 @@ export async function insertGoogleCalendarEvent(userId: string | number, event: 
       }
     };
 
+    const targetCalendarId = customCalendarId && customCalendarId.trim() ? customCalendarId.trim() : 'primary';
+
     const res = await calendar.events.insert({
-      calendarId: 'primary',
+      calendarId: targetCalendarId,
       requestBody: calendarPayload
     });
 

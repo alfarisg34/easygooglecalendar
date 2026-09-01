@@ -1,40 +1,51 @@
 # 📅 EasyCal // Serverless OCR & Gemini Calendar Studio
 
-Layanan publik **Serverless OCR & Multimodal AI** untuk mengekstrak dokumen surat dinas (PDF), poster kegiatan (JPG/PNG), dan pesan broadcast chat ke **Google Calendar** secara instan (1-Click) dengan model **Bring Your Own Key (BYOK)** yang aman dan siap di-deploy ke **Vercel**.
-
-Terintegrasi langsung dengan layanan OCR custom di [`https://ocr.alfarighilmana.my.id/`](https://ocr.alfarighilmana.my.id/) dan Google Gemini Flash AI.
+Layanan publik **Serverless OCR & Multimodal AI** untuk mengekstrak dokumen surat dinas (PDF), poster kegiatan (JPG/PNG), dan pesan broadcast chat ke **Google Calendar** secara instan dengan otentikasi **Google OAuth 2.0**, manajemen pengaturan kredensial (BYOK), dan integrasi basis data **Neon PostgreSQL** di **Vercel**.
 
 ---
 
-## 🌟 Fitur Utama
+## 🌟 Alur Aplikasi & Fitur Utama
 
-1. **📄 Ekstraksi Multi-Format**:
-   - **Dokumen Surat PDF**: Membaca surat dinas resmi, nomor surat, tanggal rapat, tempat, dan lampiran rundown.
-   - **Poster / Flyer Gambar**: Membaca flyer webinar, bimtek, workshop, link meeting, Meeting ID, dan Passcode Zoom.
-   - **Pesan Chat / Broadcast WhatsApp**: Salinan teks undangan langsung dianalisis dalam hitungan detik.
-2. **📅 1-Click Google Calendar & `.ics`**:
-   - Membuka halaman pembuatan event Google Calendar secara otomatis dengan data yang sudah terisi lengkap (Judul, Jam Mulai/Selesai WIB, Lokasi, Narasumber, dan Deskripsi).
-   - Unduh file kalender standar `.ICS` untuk Apple Calendar, Outlook, atau Google Calendar.
-3. **🤖 Integrasi Telegram Bot Webhook Serverless (`/api/telegram/webhook`)**:
-   - Hubungkan bot Telegram Anda sendiri dengan memasukkan bot token di antarmuka web.
-   - Setiap pengguna mengirim PDF/Poster/Teks ke bot, bot otomatis membalas dengan ringkasan dan tombol inline *Tambahkan ke Google Calendar*.
-4. **🔒 100% Privacy-First & BYOK (Bring Your Own Key)**:
-   - Tidak memerlukan database backend. Kunci API Gemini disimpan lokal di browser pengguna (`localStorage`).
-5. **🎨 Desain Khusus & Responsif (`anti-template-ui`)**:
-   - Mengusung tema *Industrial Cockpit & Editorial Precision* dengan kontrol taktil, indikator status LED, dan tipografi berbobot (*Instrument Serif*, *Plus Jakarta Sans*, *JetBrains Mono*).
+1. **🔑 Halaman Utama Berbasis Google Login**:
+   - Pengunjung disambut dengan landing page modern bertema *Industrial Cockpit*.
+   - Masuk menggunakan akun Google (Google Sign-In) untuk mengamankan sesi dan mengaktifkan otorisasi Google Calendar secara langsung.
+2. **⚙️ Panel Pengaturan Kredensial & Kustomisasi**:
+   - Simpan Google Gemini API Key (BYOK) yang terisolasi per akun pengguna.
+   - Pilih model AI: `gemini-3.6-flash`, `gemini-2.5-flash`, atau `gemini-1.5-pro`.
+   - Konfigurasi Target Google Calendar ID (`primary` atau kalender bersama tim).
+   - Simpan Telegram Bot Token dan User Chat ID untuk integrasi bot Telegram pribadi.
+3. **🐘 Penyimpanan Terkelola Neon PostgreSQL (Vercel)**:
+   - Data profil pengguna, token OAuth refresh, dan preferensi pengaturan tersimpan secara persisten dan aman di Neon PostgreSQL serverless.
+   - Mendukung auto-migration skema database saat aplikasi berjalan.
+4. **📄 Ekstraksi Agenda Presisi Tinggi**:
+   - **Surat Dinas (PDF)**: Mengenali Nomor Surat, Sifat, Hal, Tanggal/Waktu (WIB/WITA/WIT), Ruang Rapat, dan Bobot JP.
+   - **Poster Flyer (Gambar)**: Mengekstrak tautan Zoom, Meeting ID, Passcode, dan daftar Narasumber.
+   - **Pesan Chat / WhatsApp**: Menganalisis broadcast undangan dalam hitungan detik.
+5. **📅 0-Click Realtime Calendar Sync**:
+   - Agenda yang diekstrak otomatis tersimpan langsung ke Google Calendar pengguna secara instan tanpa perlu import manual.
+   - Tersedia tombol buka langsung di Google Calendar, unduh file `.ICS`, dan salin teks agenda.
+6. **🤖 Bot Telegram Serverless**:
+   - Hubungkan bot Telegram Anda sendiri untuk menjadwalkan agenda cukup dengan mengirim file atau pesan chat dari aplikasi Telegram.
 
 ---
 
-## 🚀 Cara Menjalankan Secara Lokal
+## 🚀 Panduan Konfigurasi & Menjalankan Lokal
 
+### 1. Salin Environment Variables
+Salin berkas `.env.example` menjadi `.env.local`:
 ```bash
-# 1. Masuk ke direktori proyek
-cd easygooglecalendar
+cp .env.example .env.local
+```
 
-# 2. Install dependensi
+Isi variabel environment penting:
+- `DATABASE_URL`: Connection string Neon PostgreSQL (atau Vercel Postgres).
+- `SESSION_SECRET`: Kunci acak untuk enkripsi JWT sesi login.
+- `GOOGLE_CLIENT_ID` & `GOOGLE_CLIENT_SECRET`: Kredensial OAuth dari Google Cloud Console.
+- `GOOGLE_REDIRECT_URI`: `http://localhost:3000/api/auth/callback` (atau domain Vercel Anda).
+
+### 2. Jalankan Aplikasi
+```bash
 npm install
-
-# 3. Jalankan development server
 npm run dev
 ```
 
@@ -42,42 +53,9 @@ Buka [http://localhost:3000](http://localhost:3000) di browser Anda.
 
 ---
 
-## ☁️ Cara Deploy ke Vercel (1-Click)
+## ☁️ Cara Deploy ke Vercel
 
-### Opsi A: Menggunakan Vercel CLI
-```bash
-npm install -g vercel
-vercel
-```
-
-### Opsi B: Menggunakan GitHub & Vercel Dashboard
-1. Push repository ini ke GitHub.
-2. Buka [https://vercel.com/new](https://vercel.com/new) dan import repository Anda.
-3. Klik **Deploy**. Vercel akan otomatis mengenali Next.js dan konfigurasi serverless functions di `vercel.json`.
-
----
-
-## 🔌 Dokumentasi REST API
-
-### 1. Ekstraksi Dokumen (Multipart Upload)
-```bash
-curl -X POST "https://your-domain.vercel.app/api/extract" \
-  -H "x-api-key: YOUR_GEMINI_API_KEY" \
-  -F "file=@/path/to/undangan.pdf"
-```
-
-### 2. Ekstraksi Pesan Chat Teks (JSON)
-```bash
-curl -X POST "https://your-domain.vercel.app/api/extract" \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: YOUR_GEMINI_API_KEY" \
-  -d '{
-    "sourceType": "text",
-    "text": "Undangan Rapat Evaluasi Sistem pada hari Kamis 10 Sept 2026 jam 09.00 WIB di Kemnaker..."
-  }'
-```
-
-### 3. Telegram Webhook Endpoint
-```
-POST https://your-domain.vercel.app/api/telegram/webhook?bot_token=YOUR_BOT_TOKEN&gemini_key=YOUR_GEMINI_KEY
-```
+1. Hubungkan repository GitHub ke **Vercel**.
+2. Pada Vercel Dashboard, buka menu **Storage** -> Buat **Postgres (Neon)** -> Sambungkan (*Connect*) ke project Anda.
+3. Tambahkan environment variables `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, dan `SESSION_SECRET` di project settings Vercel.
+4. Deploy! Neon PostgreSQL akan otomatis diinisialisasi tabelnya saat pertama kali digunakan.

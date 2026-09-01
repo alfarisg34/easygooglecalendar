@@ -3,9 +3,9 @@ import { generateGoogleAuthUrl } from '@/lib/google-auth';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const userId = searchParams.get('user_id') || searchParams.get('tg_user_id') || 'web_anonymous';
+  const userId = searchParams.get('user_id') || searchParams.get('tg_user_id') || 'web_user';
   const origin = req.nextUrl.origin;
-  const redirectUri = `${origin}/api/auth/callback`;
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${origin}/api/auth/callback`;
 
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
     return NextResponse.json({

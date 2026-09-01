@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserGoogleAuth, deleteUserGoogleAuth } from '@/lib/token-store';
+import { getSessionFromRequest } from '@/lib/auth-session';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const userId = searchParams.get('user_id') || 'web_anonymous';
+  const session = await getSessionFromRequest(req);
+  const userId = searchParams.get('user_id') || session?.userId || session?.email || 'web_user';
 
   const auth = await getUserGoogleAuth(userId);
 
@@ -24,7 +26,8 @@ export async function GET(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const userId = searchParams.get('user_id') || 'web_anonymous';
+  const session = await getSessionFromRequest(req);
+  const userId = searchParams.get('user_id') || session?.userId || session?.email || 'web_user';
 
   await deleteUserGoogleAuth(userId);
 
