@@ -1,4 +1,5 @@
 import { google } from 'googleapis';
+import { NextRequest } from 'next/server';
 
 const SCOPES = [
   'https://www.googleapis.com/auth/calendar',
@@ -9,12 +10,44 @@ const SCOPES = [
 ];
 
 /**
+ * Derives the exact public origin (domain) behind reverse proxies like Vercel / Cloudflare
+ */
+export function getEffectiveOrigin(req: NextRequest): string {
+  const forwardedHost = req.headers.get('x-forwarded-host') || req.headers.get('host');
+  const forwardedProto = req.headers.get('x-forwarded-proto') || 'https';
+  if (forwardedHost) {
+    const isLocal = forwardedHost.includes('localhost') || forwardedHost.includes('127.0.0.1');
+    const proto = isLocal ? 'http' : forwardedProto;
+    return `${proto}://${forwardedHost}`;
+  }
+  return req.nextUrl.origin;
+}
+
+/**
+ * Resolves the matching OAuth redirect URI for both generateAuthUrl and exchangeCodeForTokens
+ */
+export function getEffectiveRedirectUri(req: NextRequest): string {
+  const origin = getEffectiveOrigin(req);
+  const envUri = process.env.GOOGLE_REDIRECT_URI?.trim();
+
+  // If envUri is set to localhost but we are accessed via production domain, prefer actual domain
+  if (envUri) {
+    if (envUri.includes('localhost') && !origin.includes('localhost')) {
+      return `${origin}/api/auth/callback`;
+    }
+    return envUri;
+  }
+
+  return `${origin}/api/auth/callback`;
+}
+
+/**
  * Creates and returns a Google OAuth2 client instance
  */
 export function getGoogleOAuth2Client(customRedirectUri?: string) {
-  const clientId = process.env.GOOGLE_CLIENT_ID || '';
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
-  const redirectUri = customRedirectUri || process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/callback';
+  const clientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
+  const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
+  const redirectUri = customRedirectUri || process.env.GOOGLE_REDIRECT_URI?.trim() || 'http://localhost:3000/api/auth/callback';
 
   return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
 }

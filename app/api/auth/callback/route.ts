@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { exchangeCodeForTokens } from '@/lib/google-auth';
+import { exchangeCodeForTokens, getEffectiveOrigin, getEffectiveRedirectUri } from '@/lib/google-auth';
 import { upsertGoogleUser } from '@/lib/db';
 import { saveUserGoogleAuth } from '@/lib/token-store';
 import { sendTelegramMessage } from '@/lib/telegram-handler';
@@ -10,8 +10,8 @@ export async function GET(req: NextRequest) {
   const code = searchParams.get('code');
   const state = searchParams.get('state') || 'web_user';
   const error = searchParams.get('error');
-  const origin = req.nextUrl.origin;
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${origin}/api/auth/callback`;
+  const origin = getEffectiveOrigin(req);
+  const redirectUri = getEffectiveRedirectUri(req);
 
   if (error) {
     return NextResponse.redirect(`${origin}/?auth_error=${encodeURIComponent(error)}`);

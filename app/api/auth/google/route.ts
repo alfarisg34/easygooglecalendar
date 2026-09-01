@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { generateGoogleAuthUrl } from '@/lib/google-auth';
+import { generateGoogleAuthUrl, getEffectiveRedirectUri } from '@/lib/google-auth';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const userId = searchParams.get('user_id') || searchParams.get('tg_user_id') || 'web_user';
-  const origin = req.nextUrl.origin;
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${origin}/api/auth/callback`;
+  const redirectUri = getEffectiveRedirectUri(req);
 
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+  const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
+
+  if (!clientId || !clientSecret) {
     return NextResponse.json({
       error: 'Google OAuth Client ID & Secret belum dikonfigurasi di environment variable (GOOGLE_CLIENT_ID & GOOGLE_CLIENT_SECRET).'
     }, { status: 500 });

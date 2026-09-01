@@ -94,6 +94,7 @@ export default function HomePage() {
   const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [user, setUser] = useState<UserSession | null>(null);
   const [dbStatus, setDbStatus] = useState<DbStatus | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   // Active View Tab in Authenticated Mode
   const [activeView, setActiveView] = useState<'extract' | 'settings' | 'telegram' | 'docs'>('extract');
@@ -133,6 +134,13 @@ export default function HomePage() {
   const fetchSession = async () => {
     try {
       setAuthLoading(true);
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        const errParam = params.get('auth_error');
+        if (errParam) {
+          setAuthError(decodeURIComponent(errParam));
+        }
+      }
       const res = await fetch('/api/auth/me');
       const data = await res.json();
       if (data.authenticated && data.user) {
@@ -376,6 +384,28 @@ export default function HomePage() {
 
         {/* Hero Section */}
         <section className="landing-hero-container">
+          {/* Auth Error Diagnosis Banner */}
+          {authError && (
+            <div style={{ background: 'rgba(255, 51, 75, 0.1)', border: '1px solid rgba(255, 51, 75, 0.4)', borderRadius: 6, padding: '1.25rem 1.5rem', marginBottom: '2.5rem', color: '#FFF' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--signal-red)', fontWeight: 700, fontSize: '1rem', marginBottom: '0.5rem' }}>
+                <AlertCircle size={20} />
+                <span>Otorisasi Google Gagal: {authError}</span>
+              </div>
+              <p style={{ fontSize: '0.875rem', color: 'var(--text-dim)', lineHeight: 1.6, marginBottom: '0.75rem' }}>
+                {authError === 'invalid_client' 
+                  ? 'Error "invalid_client" biasanya terjadi karena Google Client ID & Secret belum diisi di Vercel Environment Variables, atau Redirect URI belum didaftarkan di Google Cloud Console.' 
+                  : `Detail error: ${authError}`}
+              </p>
+              <div style={{ background: 'rgba(0,0,0,0.3)', padding: '0.75rem 1rem', borderRadius: 4, fontFamily: 'var(--font-mono)', fontSize: '0.78rem', color: 'var(--signal-amber)' }}>
+                💡 <strong>Solusi:</strong> Pastikan di Google Cloud Console &rarr; Credentials &rarr; Authorized redirect URIs terdapat:
+                <br />
+                <code style={{ color: '#FFF', display: 'inline-block', marginTop: 4 }}>
+                  {typeof window !== 'undefined' ? `${window.location.origin}/api/auth/callback` : 'https://easygooglecalendar.alfarighilmana.my.id/api/auth/callback'}
+                </code>
+              </div>
+            </div>
+          )}
+
           <div className="hero-grid">
             <div>
               <div className="hero-eyebrow">
