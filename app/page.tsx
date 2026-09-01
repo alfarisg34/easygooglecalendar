@@ -1025,7 +1025,7 @@ ${extractedEvent.google_calendar_url}`;
                 <input 
                   type="text"
                   className="chassis-input mono"
-                  placeholder="https://easygooglecalendar.vercel.app"
+                  placeholder="https://easygooglecalendar.alfarighilmana.my.id"
                   value={tgCustomUrl}
                   onChange={(e) => setTgCustomUrl(e.target.value)}
                 />
