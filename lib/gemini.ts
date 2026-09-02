@@ -253,39 +253,17 @@ Format JSON yang Wajib Dikembalikan (HANYA JSON murni tanpa markdown):
 }
 
 /**
- * Dynamically retrieves available models for this specific API key from Google
+ * Normalizes model name to clean, supported Gemini model identifiers
  */
-export async function getAvailableGeminiModels(apiKey: string): Promise<string[]> {
-  const cleanKey = apiKey.replace(/^["']|["']$/g, '').trim();
-  if (!cleanKey) return [];
-
-  try {
-    const res = await fetch(`${GEMINI_API_URL}?key=${encodeURIComponent(cleanKey)}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.models && Array.isArray(data.models)) {
-        const supported = data.models
-          .filter((m: any) => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
-          .map((m: any) => String(m.name || '').replace(/^models\//, ''))
-          .filter(Boolean);
-
-        if (supported.length > 0) return supported;
-      }
-    }
-  } catch (err) {
-    console.warn('Failed to dynamically query Gemini models list:', err);
-  }
-
-  // Fallback defaults
-  return [
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-latest',
-    'gemini-1.5-flash-8b',
-    'gemini-2.0-flash-exp',
-    'gemini-1.5-pro',
-    'gemini-1.5-pro-latest'
-  ];
+export function normalizeModelName(rawModel?: string): string {
+  if (!rawModel) return 'gemini-2.0-flash';
+  const m = String(rawModel).trim().toLowerCase().replace(/^models\//, '');
+  if (m.includes('3.6') || m.includes('3.5') || m.includes('2.5')) return 'gemini-2.0-flash';
+  if (m.includes('2.0')) return 'gemini-2.0-flash';
+  if (m.includes('1.5-pro')) return 'gemini-1.5-pro';
+  if (m.includes('1.5-flash')) return 'gemini-1.5-flash';
+  if (m.includes('1.5')) return 'gemini-1.5-flash';
+  return m || 'gemini-2.0-flash';
 }
 
 async function callGeminiGenerateContent(params: {
@@ -296,30 +274,16 @@ async function callGeminiGenerateContent(params: {
   engineUsed?: 'gemini' | 'ocr_service' | 'hybrid';
 }): Promise<ExtractionResponse> {
   const cleanApiKey = (params.apiKey || '').replace(/^["']|["']$/g, '').trim();
-  
-  // 1. Fetch available models for this API key
-  const availableModels = await getAvailableGeminiModels(cleanApiKey);
+  const primaryModel = normalizeModelName(params.model);
 
-  // 2. Build prioritized models queue
-  const preferredPriority = [
-    params.model,
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-latest',
-    'gemini-1.5-flash-8b',
-    'gemini-2.0-flash-exp',
-    'gemini-1.5-pro',
-    'gemini-1.5-pro-latest'
-  ];
-
+  // Directly call normalized primary model (1 single fast API hit, no extra GET discovery)
   const modelsToTry = [
-    ...preferredPriority.filter(m => m && availableModels.includes(m)),
-    ...availableModels,
+    primaryModel,
     'gemini-2.0-flash',
     'gemini-1.5-flash',
     'gemini-1.5-flash-latest',
     'gemini-1.5-pro'
-  ].filter((m, i, arr) => m && arr.indexOf(m) === i); // Unique models
+  ].filter((m, i, arr) => m && arr.indexOf(m) === i);
 
   let lastError = '';
 

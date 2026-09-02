@@ -148,7 +148,7 @@ export async function sendTelegramChatAction(params: {
 }
 
 /**
- * Starts an animated, informative Telegram progress bar with dynamic emojis
+ * Starts an animated, continuous Telegram progress bar with dynamic rotating emojis
  */
 export function startTelegramProgressBar(params: {
   botToken: string;
@@ -159,39 +159,20 @@ export function startTelegramProgressBar(params: {
 }) {
   const { botToken, chatId, messageId, fileName, fileType } = params;
 
-  const stages = [
-    {
-      progress: 25,
-      bar: '■■□□□□□□□□',
-      emote: '🔍',
-      action: 'Membaca struktur visual & kop surat...',
-      detail: 'Mendeteksi instansi, nomor surat & sifat kegiatan...'
-    },
-    {
-      progress: 50,
-      bar: '■■■■■□□□□□',
-      emote: '🧠',
-      action: 'Menganalisis isi surat & agenda dengan Gemini AI...',
-      detail: 'Mengekstrak tanggal, jam pelaksanaan (WIB), dan tempat acara...'
-    },
-    {
-      progress: 75,
-      bar: '■■■■■■■□□□',
-      emote: '⚡',
-      action: 'Mengekstrak kredensial meeting, narasumber & JP...',
-      detail: 'Mencari ID Zoom, Passcode, link registrasi & pemateri...'
-    },
-    {
-      progress: 90,
-      bar: '■■■■■■■■■□',
-      emote: '📅',
-      action: 'Menyusun entitas event & validasi waktu...',
-      detail: 'Menyiapkan sinkronisasi 0-Click ke Google Calendar...'
-    }
-  ];
-
-  let currentStageIndex = 0;
+  let elapsedTicks = 0;
   let isStopped = false;
+
+  const dynamicStages = [
+    { emote: '⏳', action: 'Mengunduh & memverifikasi dokumen surat', detail: 'Memeriksa format berkas & membaca dokumen...' },
+    { emote: '🔍', action: 'Memindai tata letak visual & kop instansi', detail: 'Mendeteksi nomor surat, sifat & perihal agenda...' },
+    { emote: '🧠', action: 'Menganalisis isi surat dengan Google Gemini AI', detail: 'Mengekstrak tanggal pelaksanaan & jam rapat (WIB)...' },
+    { emote: '📝', action: 'Mengekstrak narasumber, ruang rapat & lokasi', detail: 'Mengidentifikasi ruangan gedung / link platform Zoom...' },
+    { emote: '⚡', action: 'Mendeteksi kredensial Zoom & link meeting', detail: 'Mencari ID Zoom, Passcode, link registrasi & materi...' },
+    { emote: '🔗', action: 'Mengekstrak bobot Jam Pelajaran (JP)', detail: 'Memeriksa jumlah JP sertifikat & daftar peserta...' },
+    { emote: '🤖', action: 'Menjalankan penalaran AI & parsing format', detail: 'Standardisasi format ISO 8601 & zona waktu Asia/Jakarta...' },
+    { emote: '📅', action: 'Menyiapkan event Google Calendar', detail: 'Memvalidasi tautan & deskripsi lengkap agenda rapat...' },
+    { emote: '✨', action: 'Memproses sinkronisasi 0-Click Calendar', detail: 'Menghubungkan langsung ke kalender akun Google Anda...' }
+  ];
 
   const intervalId = setInterval(async () => {
     if (isStopped) {
@@ -199,26 +180,32 @@ export function startTelegramProgressBar(params: {
       return;
     }
 
-    if (currentStageIndex < stages.length) {
-      const stage = stages[currentStageIndex];
-      const typeLabel = fileType === 'pdf' ? 'Surat PDF' : fileType === 'image' ? 'Poster Gambar' : 'Teks Undangan';
+    elapsedTicks++;
+    const stageIndex = Math.min(elapsedTicks - 1, dynamicStages.length - 1);
+    const stage = dynamicStages[stageIndex];
+    
+    // Smooth asymptotic progress calculation (15% -> 32% -> 48% -> 62% -> 74% -> 83% -> 89% -> 93% -> 96%)
+    const progress = Math.min(96, Math.round(15 + (81 * (1 - Math.exp(-elapsedTicks / 3.8)))));
+    const filledBlocks = Math.min(10, Math.max(1, Math.round(progress / 10)));
+    const bar = '■'.repeat(filledBlocks) + '□'.repeat(10 - filledBlocks);
 
-      const updateText = 
-        `${stage.emote} *[${stage.bar}] ${stage.progress}%* ${stage.action}\n\n` +
-        `📄 *Berkas*: \`${fileName}\` (${typeLabel})\n` +
-        `💡 *Status*: _${stage.detail}_`;
+    const typeLabel = fileType === 'pdf' ? 'Surat PDF' : fileType === 'image' ? 'Poster Flyer' : 'Teks Undangan';
+    const dots = '.'.repeat((elapsedTicks % 3) + 1);
 
-      await editTelegramMessage({
-        botToken,
-        chatId,
-        messageId,
-        text: updateText
-      });
+    const updateText = 
+      `${stage.emote} *[${bar}] ${progress}%* ${stage.action}${dots}\n\n` +
+      `📄 *Berkas*: \`${fileName}\` (${typeLabel})\n` +
+      `💡 *Status*: _${stage.detail}_`;
 
-      sendTelegramChatAction({ botToken, chatId, action: 'typing' });
-      currentStageIndex++;
-    }
-  }, 1600);
+    await editTelegramMessage({
+      botToken,
+      chatId,
+      messageId,
+      text: updateText
+    });
+
+    sendTelegramChatAction({ botToken, chatId, action: 'typing' });
+  }, 2200);
 
   return {
     stop: () => {
@@ -616,15 +603,6 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
         return { ok: true };
       }
 
-      if (initRes.message_id) {
-        await editTelegramMessage({
-          botToken,
-          chatId,
-          messageId: initRes.message_id,
-          text: `✅ *[■■■■■■■■■■] 100%* Pemindaian AI selesai! Menjadwalkan ke Google Calendar...`
-        });
-      }
-
       await dispatchCalendarResult({ 
         botToken, 
         chatId, 
@@ -632,7 +610,8 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
         event: result.event, 
         hostOrigin,
         userAuth,
-        calendarId: dbUser?.calendar_id || 'primary'
+        calendarId: dbUser?.calendar_id || 'primary',
+        progressMessageId: initRes.message_id
       });
     } catch (err: any) {
       if (progressTracker) progressTracker.stop();
@@ -708,15 +687,6 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
         return { ok: true };
       }
 
-      if (initRes.message_id) {
-        await editTelegramMessage({
-          botToken,
-          chatId,
-          messageId: initRes.message_id,
-          text: `✅ *[■■■■■■■■■■] 100%* Pemindaian visual AI selesai! Menjadwalkan ke Google Calendar...`
-        });
-      }
-
       await dispatchCalendarResult({ 
         botToken, 
         chatId, 
@@ -724,7 +694,8 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
         event: result.event, 
         hostOrigin,
         userAuth,
-        calendarId: dbUser?.calendar_id || 'primary'
+        calendarId: dbUser?.calendar_id || 'primary',
+        progressMessageId: initRes.message_id
       });
     } catch (err: any) {
       if (progressTracker) progressTracker.stop();
@@ -796,15 +767,6 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
         return { ok: true };
       }
 
-      if (initRes.message_id) {
-        await editTelegramMessage({
-          botToken,
-          chatId,
-          messageId: initRes.message_id,
-          text: `✅ *[■■■■■■■■■■] 100%* Pemrosesan teks selesai! Menjadwalkan ke Google Calendar...`
-        });
-      }
-
       await dispatchCalendarResult({ 
         botToken, 
         chatId, 
@@ -812,7 +774,8 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
         event: result.event, 
         hostOrigin,
         userAuth,
-        calendarId: dbUser?.calendar_id || 'primary'
+        calendarId: dbUser?.calendar_id || 'primary',
+        progressMessageId: initRes.message_id
       });
     } catch (err: any) {
       if (progressTracker) progressTracker.stop();
@@ -841,12 +804,12 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
       botToken,
       chatId,
       text: `👋 *Halo! Saya Bot Penjadwalan Agenda Google Calendar.*
-
+ 
 Silakan kirimkan:
 1. 📄 Berkas *Surat Dinas PDF* (\`.pdf\`)
 2. 🖼️ Berkas *Poster / Flyer Kegiatan* (JPG/PNG)
 3. 💬 Salinan teks lengkap undangan rapat
-
+ 
 📌 *Status Akun*: ${isConnected ? `✅ Terhubung (${userAuth?.email})` : '⚠️ Belum Terhubung'}
 💡 Ketik \`/help\` untuk melihat panduan lengkap atau \`/connect\` untuk menghubungkan kalender.`,
       inlineButtons: !isConnected ? [{ text: '🔑 Hubungkan Google Calendar', url: authUrl }] : undefined
@@ -870,8 +833,9 @@ async function dispatchCalendarResult(params: {
   hostOrigin: string;
   userAuth?: any;
   calendarId?: string;
+  progressMessageId?: number;
 }) {
-  const { botToken, chatId, userId, event, hostOrigin, userAuth, calendarId } = params;
+  const { botToken, chatId, userId, event, hostOrigin, userAuth, calendarId, progressMessageId } = params;
 
   const startDt = DateTime.fromISO(event.start_time).setZone('Asia/Jakarta');
   const endDt = DateTime.fromISO(event.end_time).setZone('Asia/Jakarta');
@@ -918,17 +882,32 @@ async function dispatchCalendarResult(params: {
       if (event.meeting_link) replyText += `🔗 *Link*: ${event.meeting_link}\n`;
       if (event.speakers) replyText += `👥 *Narasumber*: ${event.speakers}\n`;
 
-      await sendTelegramMessage({
-        botToken,
-        chatId,
-        text: replyText,
-        inlineButtons: [
-          {
-            text: '📅 Lihat di Google Calendar',
-            url: insertResult.htmlLink || event.google_calendar_url || 'https://calendar.google.com'
-          }
-        ]
-      });
+      const inlineButtons = [
+        {
+          text: '📅 Lihat di Google Calendar',
+          url: insertResult.htmlLink || event.google_calendar_url || 'https://calendar.google.com'
+        }
+      ];
+
+      if (progressMessageId) {
+        const edited = await editTelegramMessage({
+          botToken,
+          chatId,
+          messageId: progressMessageId,
+          text: replyText,
+          inlineButtons
+        });
+        if (!edited) {
+          await sendTelegramMessage({ botToken, chatId, text: replyText, inlineButtons });
+        }
+      } else {
+        await sendTelegramMessage({
+          botToken,
+          chatId,
+          text: replyText,
+          inlineButtons
+        });
+      }
       return;
     }
   }
@@ -966,19 +945,34 @@ async function dispatchCalendarResult(params: {
 
   replyText += `\n💡 *Pilih opsi di bawah untuk menyimpan ke kalender:*`;
 
-  await sendTelegramMessage({
-    botToken,
-    chatId,
-    text: replyText,
-    inlineButtons: [
-      {
-        text: '📅 Tambahkan ke Google Calendar',
-        url: event.google_calendar_url || 'https://calendar.google.com'
-      },
-      {
-        text: '⚡ Hubungkan Akun (Auto-Sync)',
-        url: authUrl
-      }
-    ]
-  });
+  const inlineButtons = [
+    {
+      text: '📅 Tambahkan ke Google Calendar',
+      url: event.google_calendar_url || 'https://calendar.google.com'
+    },
+    {
+      text: '⚡ Hubungkan Akun (Auto-Sync)',
+      url: authUrl
+    }
+  ];
+
+  if (progressMessageId) {
+    const edited = await editTelegramMessage({
+      botToken,
+      chatId,
+      messageId: progressMessageId,
+      text: replyText,
+      inlineButtons
+    });
+    if (!edited) {
+      await sendTelegramMessage({ botToken, chatId, text: replyText, inlineButtons });
+    }
+  } else {
+    await sendTelegramMessage({
+      botToken,
+      chatId,
+      text: replyText,
+      inlineButtons
+    });
+  }
 }
