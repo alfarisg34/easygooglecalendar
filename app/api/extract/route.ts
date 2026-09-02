@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
       }
 
       const finalApiKey = passedApiKey || dbUser?.gemini_api_key || process.env.GEMINI_API_KEY || '';
-      const finalModel = passedModel || dbUser?.model_name || 'gemini-3.6-flash';
+      const finalModel = passedModel || dbUser?.model_name || 'gemini-2.0-flash';
       const finalEngine = (passedEngine || dbUser?.ocr_engine || 'gemini') as any;
 
       if (file) {
@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
       if (body.calendarId) customCalendarId = body.calendarId;
 
       const finalApiKey = passedApiKey || dbUser?.gemini_api_key || process.env.GEMINI_API_KEY || '';
-      const finalModel = body.model || dbUser?.model_name || 'gemini-3.6-flash';
+      const finalModel = body.model || dbUser?.model_name || 'gemini-2.0-flash';
       const finalEngine = body.engine || dbUser?.ocr_engine || 'gemini';
 
       extractionParams = {

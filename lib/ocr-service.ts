@@ -24,7 +24,7 @@ export async function callCustomOcrService(params: {
       body: JSON.stringify({
         base64Data: params.base64Data,
         mimeType: params.mimeType || 'application/pdf',
-        model: params.model || 'gemini-3.6-flash'
+        model: params.model || 'gemini-2.0-flash'
       })
     });
 

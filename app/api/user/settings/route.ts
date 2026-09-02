@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
     settings: {
       phoneNumber: user.phone_number || '',
       geminiApiKey: user.gemini_api_key || '',
-      modelName: user.model_name || 'gemini-3.6-flash',
+      modelName: user.model_name === 'gemini-3.6-flash' ? 'gemini-2.0-flash' : (user.model_name || 'gemini-2.0-flash'),
       ocrEngine: user.ocr_engine || 'gemini',
       ocrServiceUrl: user.ocr_service_url || '',
       calendarId: user.calendar_id || 'primary',

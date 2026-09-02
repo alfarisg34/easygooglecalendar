@@ -102,7 +102,7 @@ export async function extractEventFromSource(request: ExtractionRequest): Promis
     };
   }
 
-  const model = request.model || 'gemini-3.6-flash';
+  const model = normalizeModelName(request.model || 'gemini-2.0-flash');
   const nowISO = new Date().toISOString();
 
   // Route 1: Using Custom OCR Service first if requested
@@ -258,9 +258,10 @@ Format JSON yang Wajib Dikembalikan (HANYA JSON murni tanpa markdown):
 export function normalizeModelName(rawModel?: string): string {
   if (!rawModel) return 'gemini-2.0-flash';
   const m = String(rawModel).trim().toLowerCase().replace(/^models\//, '');
-  if (m.includes('3.6') || m.includes('3.5') || m.includes('2.5')) return 'gemini-2.0-flash';
+  if (m === 'gemini-3.6-flash' || m.includes('3.6') || m.includes('3.5') || m.includes('2.5')) return 'gemini-2.0-flash';
+  if (m.includes('2.0-flash-lite') || m.includes('lite')) return 'gemini-2.0-flash-lite';
   if (m.includes('2.0')) return 'gemini-2.0-flash';
-  if (m.includes('1.5-pro')) return 'gemini-1.5-pro';
+  if (m.includes('1.5-pro')) return 'gemini-1.5-pro-latest';
   if (m.includes('1.5-flash')) return 'gemini-1.5-flash';
   if (m.includes('1.5')) return 'gemini-1.5-flash';
   return m || 'gemini-2.0-flash';
@@ -276,13 +277,13 @@ async function callGeminiGenerateContent(params: {
   const cleanApiKey = (params.apiKey || '').replace(/^["']|["']$/g, '').trim();
   const primaryModel = normalizeModelName(params.model);
 
-  // Directly call normalized primary model (1 single fast API hit, no extra GET discovery)
+  // Valid official fallback models
   const modelsToTry = [
     primaryModel,
     'gemini-2.0-flash',
     'gemini-1.5-flash',
-    'gemini-1.5-flash-latest',
-    'gemini-1.5-pro'
+    'gemini-2.0-flash-lite',
+    'gemini-1.5-flash-latest'
   ].filter((m, i, arr) => m && arr.indexOf(m) === i);
 
   let lastError = '';

@@ -98,7 +98,7 @@ export async function initDatabase(): Promise<boolean> {
         calendar_id VARCHAR(255) DEFAULT 'primary',
         ocr_engine VARCHAR(50) DEFAULT 'gemini',
         ocr_service_url TEXT,
-        model_name VARCHAR(100) DEFAULT 'gemini-3.6-flash',
+        model_name VARCHAR(100) DEFAULT 'gemini-2.0-flash',
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
