@@ -127,6 +127,7 @@ export default function HomePage() {
   const [inputText, setInputText] = useState<string>('');
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [extractProgress, setExtractProgress] = useState<number>(0);
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [extractedEvent, setExtractedEvent] = useState<CalendarEvent | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -342,7 +343,24 @@ export default function HomePage() {
     }
 
     setIsLoading(true);
-    setStatusMessage('Menginisialisasi pemindaian AI...');
+    setExtractProgress(15);
+    setStatusMessage('Menginisialisasi pemindaian AI & membaca tata letak...');
+
+    const progressTimer = setInterval(() => {
+      setExtractProgress((prev) => {
+        if (prev >= 85) return prev;
+        if (prev < 40) {
+          setStatusMessage('Memindai nomor surat, waktu (WIB), dan lokasi kegiatan...');
+          return prev + 15;
+        }
+        if (prev < 70) {
+          setStatusMessage('Mengekstrak narasumber, bobot JP & link Zoom meeting...');
+          return prev + 15;
+        }
+        setStatusMessage('Menyusun struktur event & sinkronisasi Google Calendar...');
+        return prev + 10;
+      });
+    }, 1200);
 
     try {
       const formData = new FormData();
@@ -355,10 +373,8 @@ export default function HomePage() {
 
       if (inputTab === 'text') {
         formData.append('text', inputText);
-        setStatusMessage('Mengekstrak entitas jadwal & agenda dari teks...');
       } else if (selectedFile) {
         formData.append('file', selectedFile);
-        setStatusMessage(`Memproses ${selectedFile.name} melalui OCR & Gemini Vision...`);
       }
 
       const res = await fetch('/api/extract', {
@@ -372,6 +388,8 @@ export default function HomePage() {
         throw new Error(data.error || 'Gagal mengekstrak informasi agenda.');
       }
 
+      setExtractProgress(100);
+      setStatusMessage('Selesai! Agenda berhasil diekstrak.');
       setExtractedEvent(data.event);
       if (data.autoSyncResult) {
         setAutoSyncResult(data.autoSyncResult);
@@ -380,8 +398,12 @@ export default function HomePage() {
     } catch (err: any) {
       setErrorMessage(err.message || 'Terjadi kesalahan sistem saat mengekstrak.');
     } finally {
+      clearInterval(progressTimer);
       setIsLoading(false);
-      setStatusMessage('');
+      setTimeout(() => {
+        setExtractProgress(0);
+        setStatusMessage('');
+      }, 1000);
     }
   };
 
@@ -948,8 +970,34 @@ export default function HomePage() {
                       </div>
                     )}
 
+                    {/* Loading Progress Bar Indicator */}
+                    {isLoading && (
+                      <div style={{ marginTop: '1.25rem', background: 'var(--bg-inset)', border: 'var(--border-chassis)', borderRadius: 4, padding: '1rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', fontSize: '0.78rem' }}>
+                          <span style={{ color: 'var(--signal-amber)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span className="spinner-chassis amber" style={{ width: 14, height: 14, borderWidth: 2 }}></span>
+                            <span>{statusMessage}</span>
+                          </span>
+                          <span style={{ fontFamily: 'var(--font-mono)', color: '#FFF', fontWeight: 700 }}>
+                            {extractProgress}%
+                          </span>
+                        </div>
+                        <div style={{ width: '100%', height: 6, background: 'rgba(255, 255, 255, 0.08)', borderRadius: 3, overflow: 'hidden' }}>
+                          <div 
+                            style={{ 
+                              width: `${extractProgress}%`, 
+                              height: '100%', 
+                              background: 'linear-gradient(90deg, var(--signal-amber), var(--signal-green))', 
+                              transition: 'width 0.4s ease',
+                              borderRadius: 3
+                            }}
+                          ></div>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Extract Action Button */}
-                    <div style={{ marginTop: '1.5rem' }}>
+                    <div style={{ marginTop: '1.25rem' }}>
                       <button 
                         onClick={handleExtract}
                         disabled={isLoading}
@@ -959,7 +1007,7 @@ export default function HomePage() {
                         {isLoading ? (
                           <>
                             <span className="spinner-chassis"></span>
-                            <span>{statusMessage || 'Mengekstrak Agenda...'}</span>
+                            <span>Memproses ({extractProgress}%)...</span>
                           </>
                         ) : (
                           <>

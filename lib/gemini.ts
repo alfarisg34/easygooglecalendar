@@ -252,6 +252,42 @@ Format JSON yang Wajib Dikembalikan (HANYA JSON murni tanpa markdown):
   });
 }
 
+/**
+ * Dynamically retrieves available models for this specific API key from Google
+ */
+export async function getAvailableGeminiModels(apiKey: string): Promise<string[]> {
+  const cleanKey = apiKey.replace(/^["']|["']$/g, '').trim();
+  if (!cleanKey) return [];
+
+  try {
+    const res = await fetch(`${GEMINI_API_URL}?key=${encodeURIComponent(cleanKey)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.models && Array.isArray(data.models)) {
+        const supported = data.models
+          .filter((m: any) => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
+          .map((m: any) => String(m.name || '').replace(/^models\//, ''))
+          .filter(Boolean);
+
+        if (supported.length > 0) return supported;
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to dynamically query Gemini models list:', err);
+  }
+
+  // Fallback defaults
+  return [
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-flash-8b',
+    'gemini-2.0-flash-exp',
+    'gemini-1.5-pro',
+    'gemini-1.5-pro-latest'
+  ];
+}
+
 async function callGeminiGenerateContent(params: {
   apiKey: string;
   model: string;
@@ -260,14 +296,30 @@ async function callGeminiGenerateContent(params: {
   engineUsed?: 'gemini' | 'ocr_service' | 'hybrid';
 }): Promise<ExtractionResponse> {
   const cleanApiKey = (params.apiKey || '').replace(/^["']|["']$/g, '').trim();
-  const modelsToTry = [
+  
+  // 1. Fetch available models for this API key
+  const availableModels = await getAvailableGeminiModels(cleanApiKey);
+
+  // 2. Build prioritized models queue
+  const preferredPriority = [
     params.model,
     'gemini-2.0-flash',
     'gemini-1.5-flash',
-    'gemini-2.5-flash',
-    'gemini-3.6-flash',
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-flash-8b',
+    'gemini-2.0-flash-exp',
+    'gemini-1.5-pro',
+    'gemini-1.5-pro-latest'
+  ];
+
+  const modelsToTry = [
+    ...preferredPriority.filter(m => m && availableModels.includes(m)),
+    ...availableModels,
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-latest',
     'gemini-1.5-pro'
-  ].filter((m, i, arr) => m && arr.indexOf(m) === i); // Unique valid models
+  ].filter((m, i, arr) => m && arr.indexOf(m) === i); // Unique models
 
   let lastError = '';
 

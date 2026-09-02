@@ -17,7 +17,7 @@ export async function sendTelegramMessage(params: {
   inlineButtons?: Array<{ text: string; url?: string; callback_data?: string }>;
   replyButtons?: Array<Array<{ text: string; request_contact?: boolean; request_location?: boolean }>>;
   removeKeyboard?: boolean;
-}) {
+}): Promise<{ ok: boolean; message_id?: number }> {
   const url = `${TELEGRAM_API_URL}/bot${params.botToken}/sendMessage`;
   
   const bodyPayload: any = {
@@ -52,10 +52,67 @@ export async function sendTelegramMessage(params: {
       body: JSON.stringify(bodyPayload)
     });
     
+    const data = await res.json();
+    if (data.ok && data.result?.message_id) {
+      return { ok: true, message_id: data.result.message_id };
+    }
+
     if (!res.ok) {
       const errText = await res.text();
       console.warn('Telegram sendMessage Markdown failed, retrying plain text:', errText);
       // Fallback: Retry without parse_mode if Markdown parsing failed
+      delete bodyPayload.parse_mode;
+      const retryRes = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyPayload)
+      });
+      const retryData = await retryRes.json();
+      if (retryData.ok && retryData.result?.message_id) {
+        return { ok: true, message_id: retryData.result.message_id };
+      }
+    }
+  } catch (err) {
+    console.error('Telegram sendMessage network error:', err);
+  }
+
+  return { ok: false };
+}
+
+/**
+ * Edits an existing Telegram message in-place
+ */
+export async function editTelegramMessage(params: {
+  botToken: string;
+  chatId: number;
+  messageId: number;
+  text: string;
+  inlineButtons?: Array<{ text: string; url?: string; callback_data?: string }>;
+}): Promise<boolean> {
+  const url = `${TELEGRAM_API_URL}/bot${params.botToken}/editMessageText`;
+  const bodyPayload: any = {
+    chat_id: params.chatId,
+    message_id: params.messageId,
+    text: params.text,
+    parse_mode: 'Markdown',
+    disable_web_page_preview: false
+  };
+
+  if (params.inlineButtons && params.inlineButtons.length > 0) {
+    bodyPayload.reply_markup = {
+      inline_keyboard: [
+        params.inlineButtons.map(btn => ({ text: btn.text, url: btn.url, callback_data: btn.callback_data }))
+      ]
+    };
+  }
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(bodyPayload)
+    });
+    if (!res.ok) {
       delete bodyPayload.parse_mode;
       await fetch(url, {
         method: 'POST',
@@ -63,9 +120,112 @@ export async function sendTelegramMessage(params: {
         body: JSON.stringify(bodyPayload)
       });
     }
+    return true;
   } catch (err) {
-    console.error('Telegram sendMessage network error:', err);
+    return false;
   }
+}
+
+/**
+ * Sends a Telegram chat action (typing indicator)
+ */
+export async function sendTelegramChatAction(params: {
+  botToken: string;
+  chatId: number;
+  action?: 'typing' | 'upload_document' | 'find_location';
+}) {
+  const url = `${TELEGRAM_API_URL}/bot${params.botToken}/sendChatAction`;
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: params.chatId,
+        action: params.action || 'typing'
+      })
+    });
+  } catch (e) {}
+}
+
+/**
+ * Starts an animated, informative Telegram progress bar with dynamic emojis
+ */
+export function startTelegramProgressBar(params: {
+  botToken: string;
+  chatId: number;
+  messageId: number;
+  fileName: string;
+  fileType: 'pdf' | 'image' | 'text';
+}) {
+  const { botToken, chatId, messageId, fileName, fileType } = params;
+
+  const stages = [
+    {
+      progress: 25,
+      bar: '■■□□□□□□□□',
+      emote: '🔍',
+      action: 'Membaca struktur visual & kop surat...',
+      detail: 'Mendeteksi instansi, nomor surat & sifat kegiatan...'
+    },
+    {
+      progress: 50,
+      bar: '■■■■■□□□□□',
+      emote: '🧠',
+      action: 'Menganalisis isi surat & agenda dengan Gemini AI...',
+      detail: 'Mengekstrak tanggal, jam pelaksanaan (WIB), dan tempat acara...'
+    },
+    {
+      progress: 75,
+      bar: '■■■■■■■□□□',
+      emote: '⚡',
+      action: 'Mengekstrak kredensial meeting, narasumber & JP...',
+      detail: 'Mencari ID Zoom, Passcode, link registrasi & pemateri...'
+    },
+    {
+      progress: 90,
+      bar: '■■■■■■■■■□',
+      emote: '📅',
+      action: 'Menyusun entitas event & validasi waktu...',
+      detail: 'Menyiapkan sinkronisasi 0-Click ke Google Calendar...'
+    }
+  ];
+
+  let currentStageIndex = 0;
+  let isStopped = false;
+
+  const intervalId = setInterval(async () => {
+    if (isStopped) {
+      clearInterval(intervalId);
+      return;
+    }
+
+    if (currentStageIndex < stages.length) {
+      const stage = stages[currentStageIndex];
+      const typeLabel = fileType === 'pdf' ? 'Surat PDF' : fileType === 'image' ? 'Poster Gambar' : 'Teks Undangan';
+
+      const updateText = 
+        `${stage.emote} *[${stage.bar}] ${stage.progress}%* ${stage.action}\n\n` +
+        `📄 *Berkas*: \`${fileName}\` (${typeLabel})\n` +
+        `💡 *Status*: _${stage.detail}_`;
+
+      await editTelegramMessage({
+        botToken,
+        chatId,
+        messageId,
+        text: updateText
+      });
+
+      sendTelegramChatAction({ botToken, chatId, action: 'typing' });
+      currentStageIndex++;
+    }
+  }, 1600);
+
+  return {
+    stop: () => {
+      isStopped = true;
+      clearInterval(intervalId);
+    }
+  };
 }
 
 /**
@@ -411,28 +571,58 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
       return { ok: true };
     }
 
-    await sendTelegramMessage({
+    const initRes = await sendTelegramMessage({
       botToken,
       chatId,
-      text: `⏳ *Dokumen surat ${doc.file_name || 'undangan.pdf'} diterima.* Sedang menganalisis isi surat & jadwal dengan Google Gemini AI...`
+      text: `⏳ *[■□□□□□□□□□] 10%* Menerima berkas & menginisialisasi AI...\n\n📄 *Berkas*: \`${doc.file_name || 'surat_undangan.pdf'}\`\n💡 *Status*: _Mengunduh berkas dari server Telegram..._`
     });
+
+    const progressTracker = initRes.message_id ? startTelegramProgressBar({
+      botToken,
+      chatId,
+      messageId: initRes.message_id,
+      fileName: doc.file_name || 'surat_undangan.pdf',
+      fileType: 'pdf'
+    }) : null;
 
     try {
       const { base64Data, mimeType } = await downloadTelegramFile({ botToken, fileId: doc.file_id });
       const result = await extractEventFromSource({
         apiKey: effectiveGeminiKey,
+        model: dbUser?.model_name || botAdmin?.model_name || 'gemini-2.0-flash',
         sourceType: 'pdf',
         base64Data,
         mimeType
       });
 
+      if (progressTracker) progressTracker.stop();
+
       if (!result.success || !result.event) {
-        await sendTelegramMessage({
+        const errMsg = result.error || 'Dokumen tidak dapat dibaca oleh AI.';
+        if (initRes.message_id) {
+          await editTelegramMessage({
+            botToken,
+            chatId,
+            messageId: initRes.message_id,
+            text: `❌ *Gagal mengekstrak jadwal:* ${errMsg}`
+          });
+        } else {
+          await sendTelegramMessage({
+            botToken,
+            chatId,
+            text: `❌ *Gagal mengekstrak jadwal:* ${errMsg}`
+          });
+        }
+        return { ok: true };
+      }
+
+      if (initRes.message_id) {
+        await editTelegramMessage({
           botToken,
           chatId,
-          text: `❌ *Gagal mengekstrak jadwal:* ${result.error || 'Dokumen tidak dapat dibaca.'}`
+          messageId: initRes.message_id,
+          text: `✅ *[■■■■■■■■■■] 100%* Pemindaian AI selesai! Menjadwalkan ke Google Calendar...`
         });
-        return { ok: true };
       }
 
       await dispatchCalendarResult({ 
@@ -445,11 +635,21 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
         calendarId: dbUser?.calendar_id || 'primary'
       });
     } catch (err: any) {
-      await sendTelegramMessage({
-        botToken,
-        chatId,
-        text: `❌ Terjadi kesalahan saat memproses dokumen: ${err.message}`
-      });
+      if (progressTracker) progressTracker.stop();
+      if (initRes.message_id) {
+        await editTelegramMessage({
+          botToken,
+          chatId,
+          messageId: initRes.message_id,
+          text: `❌ Terjadi kesalahan saat memproses dokumen: ${err.message}`
+        });
+      } else {
+        await sendTelegramMessage({
+          botToken,
+          chatId,
+          text: `❌ Terjadi kesalahan saat memproses dokumen: ${err.message}`
+        });
+      }
     }
     return { ok: true };
   }
@@ -463,28 +663,58 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
 
     const bestPhoto = msg.photo[msg.photo.length - 1];
 
-    await sendTelegramMessage({
+    const initRes = await sendTelegramMessage({
       botToken,
       chatId,
-      text: `⏳ *Poster kegiatan diterima.* Sedang menganalisis teks & informasi visual menggunakan Gemini AI Vision...`
+      text: `⏳ *[■□□□□□□□□□] 10%* Menerima poster & menginisialisasi AI Vision...\n\n🖼️ *Berkas*: Poster / Flyer Kegiatan\n💡 *Status*: _Mengunduh gambar dari Telegram..._`
     });
+
+    const progressTracker = initRes.message_id ? startTelegramProgressBar({
+      botToken,
+      chatId,
+      messageId: initRes.message_id,
+      fileName: 'poster_kegiatan.jpg',
+      fileType: 'image'
+    }) : null;
 
     try {
       const { base64Data, mimeType } = await downloadTelegramFile({ botToken, fileId: bestPhoto.file_id });
       const result = await extractEventFromSource({
         apiKey: effectiveGeminiKey,
+        model: dbUser?.model_name || botAdmin?.model_name || 'gemini-2.0-flash',
         sourceType: 'image',
         base64Data,
         mimeType
       });
 
+      if (progressTracker) progressTracker.stop();
+
       if (!result.success || !result.event) {
-        await sendTelegramMessage({
+        const errMsg = result.error || 'Poster tidak dapat dibaca oleh AI.';
+        if (initRes.message_id) {
+          await editTelegramMessage({
+            botToken,
+            chatId,
+            messageId: initRes.message_id,
+            text: `❌ *Gagal mengekstrak jadwal poster:* ${errMsg}`
+          });
+        } else {
+          await sendTelegramMessage({
+            botToken,
+            chatId,
+            text: `❌ *Gagal mengekstrak jadwal poster:* ${errMsg}`
+          });
+        }
+        return { ok: true };
+      }
+
+      if (initRes.message_id) {
+        await editTelegramMessage({
           botToken,
           chatId,
-          text: `❌ *Gagal mengekstrak jadwal poster:* ${result.error || 'Poster tidak dapat dibaca.'}`
+          messageId: initRes.message_id,
+          text: `✅ *[■■■■■■■■■■] 100%* Pemindaian visual AI selesai! Menjadwalkan ke Google Calendar...`
         });
-        return { ok: true };
       }
 
       await dispatchCalendarResult({ 
@@ -497,11 +727,21 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
         calendarId: dbUser?.calendar_id || 'primary'
       });
     } catch (err: any) {
-      await sendTelegramMessage({
-        botToken,
-        chatId,
-        text: `❌ Terjadi kesalahan saat memproses poster: ${err.message}`
-      });
+      if (progressTracker) progressTracker.stop();
+      if (initRes.message_id) {
+        await editTelegramMessage({
+          botToken,
+          chatId,
+          messageId: initRes.message_id,
+          text: `❌ Terjadi kesalahan saat memproses poster: ${err.message}`
+        });
+      } else {
+        await sendTelegramMessage({
+          botToken,
+          chatId,
+          text: `❌ Terjadi kesalahan saat memproses poster: ${err.message}`
+        });
+      }
     }
     return { ok: true };
   }
@@ -513,26 +753,56 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
       return { ok: true };
     }
 
-    await sendTelegramMessage({
+    const initRes = await sendTelegramMessage({
       botToken,
       chatId,
-      text: `⏳ *Menganalisis teks undangan rapat/kegiatan...*`
+      text: `⏳ *[■□□□□□□□□□] 15%* Menganalisis pesan undangan rapat...\n\n💬 *Teks*: "${text.substring(0, 50)}..."\n💡 *Status*: _Memindai struktur teks & tanggal..._`
     });
+
+    const progressTracker = initRes.message_id ? startTelegramProgressBar({
+      botToken,
+      chatId,
+      messageId: initRes.message_id,
+      fileName: 'Pesan Undangan Chat',
+      fileType: 'text'
+    }) : null;
 
     try {
       const result = await extractEventFromSource({
         apiKey: effectiveGeminiKey,
+        model: dbUser?.model_name || botAdmin?.model_name || 'gemini-2.0-flash',
         sourceType: 'text',
         text
       });
 
+      if (progressTracker) progressTracker.stop();
+
       if (!result.success || !result.event) {
-        await sendTelegramMessage({
+        const errMsg = result.error || 'Teks tidak memuat informasi agenda.';
+        if (initRes.message_id) {
+          await editTelegramMessage({
+            botToken,
+            chatId,
+            messageId: initRes.message_id,
+            text: `❌ *Gagal mengekstrak jadwal teks:* ${errMsg}`
+          });
+        } else {
+          await sendTelegramMessage({
+            botToken,
+            chatId,
+            text: `❌ *Gagal mengekstrak jadwal teks:* ${errMsg}`
+          });
+        }
+        return { ok: true };
+      }
+
+      if (initRes.message_id) {
+        await editTelegramMessage({
           botToken,
           chatId,
-          text: `❌ *Gagal mengekstrak jadwal teks:* ${result.error || 'Teks tidak memuat informasi agenda.'}`
+          messageId: initRes.message_id,
+          text: `✅ *[■■■■■■■■■■] 100%* Pemrosesan teks selesai! Menjadwalkan ke Google Calendar...`
         });
-        return { ok: true };
       }
 
       await dispatchCalendarResult({ 
@@ -545,11 +815,21 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
         calendarId: dbUser?.calendar_id || 'primary'
       });
     } catch (err: any) {
-      await sendTelegramMessage({
-        botToken,
-        chatId,
-        text: `❌ Terjadi kesalahan saat memproses teks: ${err.message}`
-      });
+      if (progressTracker) progressTracker.stop();
+      if (initRes.message_id) {
+        await editTelegramMessage({
+          botToken,
+          chatId,
+          messageId: initRes.message_id,
+          text: `❌ Terjadi kesalahan saat memproses teks: ${err.message}`
+        });
+      } else {
+        await sendTelegramMessage({
+          botToken,
+          chatId,
+          text: `❌ Terjadi kesalahan saat memproses teks: ${err.message}`
+        });
+      }
     }
     return { ok: true };
   } else if (text.length > 0) {
