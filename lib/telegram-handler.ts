@@ -3,18 +3,20 @@ import { extractEventFromSource } from './gemini';
 import { DateTime } from 'luxon';
 import { getUserGoogleAuth, deleteUserGoogleAuth } from './token-store';
 import { insertGoogleCalendarEvent } from './google-calendar-api';
-import { getUserByTelegram, getBotAdminSettings, disconnectTelegramUser, saveExtractedEvent } from './db';
+import { getUserByTelegram, getBotAdminSettings, disconnectTelegramUser, saveExtractedEvent, linkTelegramUserByPhone } from './db';
 
 const TELEGRAM_API_URL = 'https://api.telegram.org';
 
 /**
- * Sends a Telegram chat message with optional inline keyboard buttons
+ * Sends a Telegram chat message with optional inline keyboard buttons or reply keyboard
  */
 export async function sendTelegramMessage(params: {
   botToken: string;
   chatId: number;
   text: string;
-  inlineButtons?: Array<{ text: string; url: string }>;
+  inlineButtons?: Array<{ text: string; url?: string; callback_data?: string }>;
+  replyButtons?: Array<Array<{ text: string; request_contact?: boolean; request_location?: boolean }>>;
+  removeKeyboard?: boolean;
 }) {
   const url = `${TELEGRAM_API_URL}/bot${params.botToken}/sendMessage`;
   
@@ -28,8 +30,18 @@ export async function sendTelegramMessage(params: {
   if (params.inlineButtons && params.inlineButtons.length > 0) {
     bodyPayload.reply_markup = {
       inline_keyboard: [
-        params.inlineButtons.map(btn => ({ text: btn.text, url: btn.url }))
+        params.inlineButtons.map(btn => ({ text: btn.text, url: btn.url, callback_data: btn.callback_data }))
       ]
+    };
+  } else if (params.replyButtons && params.replyButtons.length > 0) {
+    bodyPayload.reply_markup = {
+      keyboard: params.replyButtons,
+      resize_keyboard: true,
+      one_time_keyboard: false
+    };
+  } else if (params.removeKeyboard) {
+    bodyPayload.reply_markup = {
+      remove_keyboard: true
     };
   }
 
@@ -146,6 +158,61 @@ export async function handleTelegramWebhook(
   const text = (msg.text || msg.caption || '').trim();
   const cleanText = text.toLowerCase();
 
+  // 0. Handle Shared Contact (Instant Phone Number Verification & Auto-Binding)
+  if (msg.contact && msg.contact.phone_number) {
+    const contactPhone = msg.contact.phone_number;
+    const linkedUser = await linkTelegramUserByPhone({
+      tgUserId: userId,
+      phoneNumber: contactPhone
+    });
+
+    if (linkedUser && (linkedUser.google_refresh_token || linkedUser.email)) {
+      await sendTelegramMessage({
+        botToken,
+        chatId,
+        text: `🎉 *AKUN BERHASIL TERHUBUNG DENGAN NOMOR HP!* ✅\n\n` +
+          `👤 *Nama*: ${linkedUser.name || 'Pengguna EasyCal'}\n` +
+          `📧 *Email*: ${linkedUser.email}\n` +
+          `📱 *No. HP Terverifikasi*: \`${linkedUser.phone_number || contactPhone}\`\n` +
+          `📅 *Target Kalender*: ${linkedUser.calendar_id || 'primary'}\n` +
+          `🤖 *AI Gemini*: ${linkedUser.gemini_api_key ? '✅ Aktif (BYOK)' : '⚠️ Belum diisi di web'}\n\n` +
+          `🚀 *Mode 0-Click Auto-Sync Aktif!*\nSekarang setiap Anda mengirim surat dinas PDF, foto poster bimtek, atau teks undangan ke sini, agenda kegiatan akan **langsung otomatis tersimpan ke Google Calendar Anda!**`,
+        inlineButtons: [
+          { text: '🌐 Buka Web EasyCal', url: hostOrigin }
+        ],
+        replyButtons: [
+          [{ text: '❓ Panduan & Status' }]
+        ]
+      });
+      return { ok: true };
+    } else {
+      const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
+      await sendTelegramMessage({
+        botToken,
+        chatId,
+        text: `⚠️ *Nomor HP Belum Terdaftar di Web EasyCal*\n\n` +
+          `Nomor HP \`${contactPhone}\` belum ditemukan di database akun EasyCal.\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━\n` +
+          `📖 *Langkah Mudah Menghubungkan:*\n` +
+          `1️⃣ Buka website EasyCal: [${hostOrigin}](${hostOrigin})\n` +
+          `2️⃣ Masuk menggunakan akun Google Anda.\n` +
+          `3️⃣ Buka tab **Pengaturan & Kredensial**, lalu masukkan No. HP Anda (\`${contactPhone}\`) dan Google Gemini API Key Anda.\n` +
+          `4️⃣ Klik tombol **Simpan Konfigurasi** di website.\n` +
+          `5️⃣ Setelah disimpan, klik tombol **📱 Bagikan Kontak Saya** di Telegram kembali!\n` +
+          `━━━━━━━━━━━━━━━━━━━━`,
+        inlineButtons: [
+          { text: '🔑 Login Web EasyCal', url: hostOrigin },
+          { text: '⚡ Otorisasi Google Langsung', url: authUrl }
+        ],
+        replyButtons: [
+          [{ text: '📱 Bagikan Kontak Saya (Verifikasi No. HP)', request_contact: true }],
+          [{ text: '❓ Panduan & Status' }]
+        ]
+      });
+      return { ok: true };
+    }
+  }
+
   // 1. Resolve this specific Telegram user's Google Calendar from Neon DB & Token Store (Method B: Personal State Binding)
   const dbUser = await getUserByTelegram({ tgUserId: userId });
   const rawAuth = await getUserGoogleAuth(userId);
@@ -160,40 +227,73 @@ export async function handleTelegramWebhook(
     updatedAt: dbUser.updated_at || new Date().toISOString()
   } : null);
 
-  // 2. Resolve AI key: user's personal key -> bot owner key -> global GEMINI_API_KEY
+  // 2. Resolve AI key: user's personal key -> bot owner key -> webhook param key -> global GEMINI_API_KEY
   const botAdmin = await getBotAdminSettings(botToken);
-  const effectiveGeminiKey = geminiKey || dbUser?.gemini_api_key || botAdmin?.gemini_api_key || process.env.GEMINI_API_KEY || '';
+  const rawKey = dbUser?.gemini_api_key || botAdmin?.gemini_api_key || geminiKey || process.env.GEMINI_API_KEY || '';
+  const effectiveGeminiKey = rawKey.replace(/^["']|["']$/g, '').trim();
 
   // Command: /connect or /login
   if (cleanText.startsWith('/connect') || cleanText.startsWith('/login') || cleanText.startsWith('/auth')) {
+    const isConnected = Boolean(userAuth && userAuth.email);
     const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
+
+    if (isConnected) {
+      await sendTelegramMessage({
+        botToken,
+        chatId,
+        text: `✅ *Akun Anda Sudah Terhubung!* 🚀\n\n📧 *Email*: ${userAuth?.email}\n📱 *No. HP*: ${dbUser?.phone_number || '-'}\n📅 *Kalender*: ${dbUser?.calendar_id || 'primary'}\n\nKirimkan berkas *Surat Dinas PDF* atau *Poster Flyer* untuk langsung menjadwalkan ke Google Calendar!`,
+        inlineButtons: [{ text: '⚙️ Buka Pengaturan Web', url: hostOrigin }]
+      });
+      return { ok: true };
+    }
+
     await sendTelegramMessage({
       botToken,
       chatId,
-      text: `🔗 *Hubungkan Google Calendar Anda*\n\nKlik tombol di bawah ini untuk menghubungkan akun Google Anda. Setiap surat dinas atau poster yang Anda kirim akan **otomatis langsung tersimpan ke Google Calendar pribadi Anda tanpa perlu klik lagi (0-Click Sync)!**`,
+      text: `🔗 *PANDUAN MENGHUBUNGKAN AKUN KE BOT TELEGRAM*\n\n` +
+        `Untuk menggunakan fitur *0-Click Auto-Sync*, Anda dapat menghubungkan akun dengan salah satu metode berikut:\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n` +
+        `🌟 *Metode 1: Verifikasi Cepat No. HP (1-Tap)*\n` +
+        `1. Login ke website: [${hostOrigin}](${hostOrigin})\n` +
+        `2. Buka tab **Pengaturan & Kredensial**, isi **Nomor WhatsApp / HP** dan **Gemini API Key**, lalu klik **Simpan Konfigurasi**.\n` +
+        `3. Tekan tombol **[ 📱 Bagikan Kontak Saya ]** di bawah chat ini!\n\n` +
+        `🔗 *Metode 2: Otorisasi Browser Langsung*\n` +
+        `Klik tombol **"🔑 Hubungkan Akun Google"** di bawah untuk login langsung via browser HP Anda.\n` +
+        `━━━━━━━━━━━━━━━━━━━━`,
       inlineButtons: [
-        { text: '🔑 Hubungkan Akun Google', url: authUrl }
+        { text: '🔑 Hubungkan Akun Google', url: authUrl },
+        { text: '🌐 Buka Website EasyCal', url: hostOrigin }
+      ],
+      replyButtons: [
+        [{ text: '📱 Bagikan Kontak Saya (Verifikasi No. HP)', request_contact: true }],
+        [{ text: '❓ Panduan & Status' }]
       ]
     });
     return { ok: true };
   }
 
-  // Command: /status
-  if (cleanText.startsWith('/status') || cleanText.startsWith('/cek')) {
+  // Command: /status or /cek or "❓ Panduan & Status"
+  if (cleanText.startsWith('/status') || cleanText.startsWith('/cek') || cleanText.includes('status') || cleanText.includes('panduan')) {
     if (userAuth && userAuth.email) {
       await sendTelegramMessage({
         botToken,
         chatId,
-        text: `✅ *Status Akun Terhubung:*\n\n📧 *Email*: ${userAuth.email}\n👤 *Nama*: ${userAuth.name || '-'}\n🔄 *Mode*: Direct 0-Click Auto-Sync Aktif\n📅 *Target Kalender*: ${dbUser?.calendar_id || 'primary'}\n\n💡 Ketik \`/disconnect\` jika ingin mengganti atau memutuskan akun Google.`
+        text: `✅ *Status Akun Terhubung:*\n\n📧 *Email*: ${userAuth.email}\n👤 *Nama*: ${userAuth.name || '-'}\n📱 *No. HP*: ${dbUser?.phone_number || '(Belum diisi di web)'}\n🤖 *AI Gemini*: ${effectiveGeminiKey ? '✅ Siap' : '⚠️ Belum Terpasang'}\n🔄 *Mode*: Direct 0-Click Auto-Sync Aktif\n📅 *Target Kalender*: ${dbUser?.calendar_id || 'primary'}\n\n💡 Ketik \`/disconnect\` jika ingin mengganti atau memutuskan akun Google.`
       });
     } else {
       const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
       await sendTelegramMessage({
         botToken,
         chatId,
-        text: `⚠️ *Akun Google Belum Terhubung*\n\nSaat ini Anda menggunakan mode manual. Hubungkan akun Google Anda agar agenda tersimpan otomatis ke kalender Anda:`,
+        text: `⚠️ *Akun Belum Terhubung ke Google Calendar*\n\n` +
+          `Agar agenda otomatis tersimpan ke kalender, silakan login ke web dan isi No. HP & Gemini API Key Anda, lalu bagikan kontak atau hubungkan via link:`,
         inlineButtons: [
-          { text: '🔑 Hubungkan Google Calendar', url: authUrl }
+          { text: '🔑 Hubungkan Google Calendar', url: authUrl },
+          { text: '🌐 Buka Web EasyCal', url: hostOrigin }
+        ],
+        replyButtons: [
+          [{ text: '📱 Bagikan Kontak Saya (Verifikasi No. HP)', request_contact: true }],
+          [{ text: '❓ Panduan & Status' }]
         ]
       });
     }
@@ -207,7 +307,10 @@ export async function handleTelegramWebhook(
     await sendTelegramMessage({
       botToken,
       chatId,
-      text: `🔌 *Koneksi Google Calendar Berhasil Diputus*\n\nAkun Google Calendar Anda telah diputus dari bot ini. Anda dapat menghubungkan kembali kapan saja dengan mengetik \`/connect\`.`
+      text: `🔌 *Koneksi Google Calendar Berhasil Diputus*\n\nAkun Google Calendar Anda telah diputus dari bot ini. Anda dapat menghubungkan kembali kapan saja dengan mengetik \`/connect\` atau membagikan kontak.`,
+      replyButtons: [
+        [{ text: '📱 Bagikan Kontak Saya (Verifikasi No. HP)', request_contact: true }]
+      ]
     });
     return { ok: true };
   }
@@ -217,22 +320,48 @@ export async function handleTelegramWebhook(
     const isConnected = Boolean(userAuth && userAuth.email);
     const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
 
+    if (isConnected) {
+      await sendTelegramMessage({
+        botToken,
+        chatId,
+        text: `👋 *Halo! Selamat datang kembali di EasyCal Bot.* 📅\n\n` +
+          `📌 *Status*: ✅ Terhubung (${userAuth?.email})\n` +
+          `📱 *No. HP*: ${dbUser?.phone_number || '-'}\n\n` +
+          `*Format berkas yang didukung:*\n` +
+          `1. 📄 *Surat Dinas PDF* (\`.pdf\`)\n` +
+          `2. 🖼️ *Poster / Flyer Bimtek / Webinar* (JPG/PNG)\n` +
+          `3. 💬 *Teks Salinan Pesan Undangan Rapat*\n\n` +
+          `✨ Cukup kirimkan dokumen atau teruskan (*forward*) pesan ke bot ini kapan saja!`,
+        replyButtons: [
+          [{ text: '❓ Panduan & Status' }]
+        ]
+      });
+      return { ok: true };
+    }
+
     await sendTelegramMessage({
       botToken,
       chatId,
-      text: `👋 *Selamat datang di Bot Agenda Dinas & Bimtek!*
+      text: `👋 *Selamat datang di Bot Penjadwalan Google Calendar (EasyCal)!*
+ 
+Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster flyer, dan broadcast rapat, lalu menyimpannya langsung ke Google Calendar Anda.
 
-Saya siap membantu Anda mencatat jadwal rapat, bimtek, webinar, dan agenda dinas langsung ke *Google Calendar*.
+📌 *Status Anda*: ⚠️ Belum Terhubung
 
-📌 *Status Anda*: ${isConnected ? `✅ Terhubung (${userAuth?.email})` : '⚠️ Belum Terhubung ke Google Calendar'}
-
-*Format yang didukung:*
-1. 📄 Kirimkan berkas *Surat PDF* (\`.pdf\`)
-2. 🖼️ Kirimkan *Poster / Flyer* (JPG/PNG)
-3. 💬 Salin & tempel teks pesan chat / broadcast
-
-${!isConnected ? '💡 *Tips*: Ketik `/connect` atau klik tombol di bawah untuk menghubungkan akun Google Calendar Anda agar agenda otomatis tersimpan secara instan (0-Click)!' : '✨ *Anda sudah siap*: Cukup kirimkan dokumen surat atau poster ke sini!'}`,
-      inlineButtons: !isConnected ? [{ text: '🔑 Hubungkan Google Calendar', url: authUrl }] : undefined
+━━━━━━━━━━━━━━━━━━━━
+💡 *CARA MENGHUBUNGKAN AKUN:*
+1️⃣ Login ke website EasyCal: [${hostOrigin}](${hostOrigin})
+2️⃣ Buka tab **Pengaturan & Kredensial**, isi **Nomor HP** dan **Gemini API Key**, lalu klik **Simpan Konfigurasi**.
+3️⃣ Tekan tombol **[ 📱 Bagikan Kontak Saya ]** di bawah ini!
+━━━━━━━━━━━━━━━━━━━━`,
+      inlineButtons: [
+        { text: '🔑 Login Web EasyCal', url: hostOrigin },
+        { text: '⚡ Otorisasi Google Langsung', url: authUrl }
+      ],
+      replyButtons: [
+        [{ text: '📱 Bagikan Kontak Saya (Verifikasi No. HP)', request_contact: true }],
+        [{ text: '❓ Panduan & Status' }]
+      ]
     });
     return { ok: true };
   }

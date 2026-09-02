@@ -36,6 +36,7 @@ export async function GET(req: NextRequest) {
         picture: user.picture,
         hasGoogleCalendar: Boolean(user.google_refresh_token),
         settings: {
+          phoneNumber: user.phone_number || '',
           geminiApiKey: user.gemini_api_key || '',
           modelName: user.model_name || 'gemini-3.6-flash',
           ocrEngine: user.ocr_engine || 'gemini',

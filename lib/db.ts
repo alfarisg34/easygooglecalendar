@@ -7,6 +7,7 @@ export interface UserRecord {
   email: string;
   name?: string;
   picture?: string;
+  phone_number?: string;
   google_refresh_token?: string;
   google_access_token?: string;
   google_token_expiry?: number;
@@ -47,6 +48,17 @@ const LOCAL_EVENTS_FILE = path.join(process.cwd(), '.user_events.json');
 const memoryUserMap = new Map<string, UserRecord>();
 const memoryEventsList: ExtractedEventRecord[] = [];
 
+/**
+ * Normalizes phone numbers to a consistent format (e.g. 0812... / +62812... -> 62812...)
+ */
+export function normalizePhoneNumber(rawPhone?: string | null): string {
+  if (!rawPhone) return '';
+  let cleaned = String(rawPhone).replace(/[^\d+]/g, '').trim();
+  if (cleaned.startsWith('+')) cleaned = cleaned.substring(1);
+  if (cleaned.startsWith('0')) cleaned = '62' + cleaned.substring(1);
+  return cleaned;
+}
+
 function getDatabaseUrl(): string | null {
   return (
     process.env.DATABASE_URL ||
@@ -76,6 +88,7 @@ export async function initDatabase(): Promise<boolean> {
         email VARCHAR(255) UNIQUE NOT NULL,
         name VARCHAR(255),
         picture TEXT,
+        phone_number VARCHAR(50),
         google_refresh_token TEXT,
         google_access_token TEXT,
         google_token_expiry BIGINT,
@@ -90,6 +103,11 @@ export async function initDatabase(): Promise<boolean> {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
     `;
+
+    // Ensure phone_number column exists if table was previously created
+    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number VARCHAR(50);`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone_number);`;
+
 
     // Create extracted_events history table
     await sql`
@@ -222,17 +240,116 @@ export async function getUserByTelegram(params: {
 }
 
 /**
- * Retrieves the Bot Owner / Admin settings by Bot Token for AI key fallback
+ * Retrieves a user by phone number
  */
-export async function getBotAdminSettings(botToken?: string): Promise<UserRecord | null> {
+export async function getUserByPhone(phoneNumber: string): Promise<UserRecord | null> {
+  const normPhone = normalizePhoneNumber(phoneNumber);
+  if (!normPhone) return null;
+
   const dbUrl = getDatabaseUrl();
-  if (dbUrl && botToken) {
+  if (dbUrl) {
     try {
       await initDatabase();
       const sql = neon(dbUrl);
       const rows = await sql`
         SELECT * FROM users 
-        WHERE telegram_bot_token = ${botToken} 
+        WHERE phone_number = ${normPhone}
+           OR phone_number = ${'+' + normPhone}
+           OR phone_number = ${'0' + normPhone.replace(/^62/, '')}
+           OR REGEXP_REPLACE(phone_number, '[^0-9]', '', 'g') = ${normPhone}
+        LIMIT 1
+      `;
+      if (rows && rows.length > 0) return rows[0] as UserRecord;
+    } catch (err) {
+      console.error('Neon DB getUserByPhone error:', err);
+    }
+  }
+
+  // Local fallback
+  const local = getLocalUsers();
+  for (const key of Object.keys(local)) {
+    const user = local[key];
+    if (user.phone_number && normalizePhoneNumber(user.phone_number) === normPhone) {
+      return user;
+    }
+  }
+  for (const user of Array.from(memoryUserMap.values())) {
+    if (user.phone_number && normalizePhoneNumber(user.phone_number) === normPhone) {
+      return user;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Links a Telegram User ID to an account by Phone Number
+ */
+export async function linkTelegramUserByPhone(params: {
+  tgUserId: string | number;
+  phoneNumber: string;
+}): Promise<UserRecord | null> {
+  const normPhone = normalizePhoneNumber(params.phoneNumber);
+  const rawId = String(params.tgUserId).replace('tg_', '');
+  const tgId = `tg_${rawId}`;
+  const now = new Date().toISOString();
+
+  if (!normPhone || !rawId) return null;
+
+  const dbUrl = getDatabaseUrl();
+  if (dbUrl) {
+    try {
+      await initDatabase();
+      const sql = neon(dbUrl);
+      const updated = await sql`
+        UPDATE users 
+        SET telegram_chat_id = ${rawId},
+            updated_at = ${now}
+        WHERE (
+          phone_number = ${normPhone}
+          OR phone_number = ${'+' + normPhone}
+          OR phone_number = ${'0' + normPhone.replace(/^62/, '')}
+          OR REGEXP_REPLACE(phone_number, '[^0-9]', '', 'g') = ${normPhone}
+        )
+        RETURNING *;
+      `;
+      if (updated && updated.length > 0) return updated[0] as UserRecord;
+    } catch (err) {
+      console.error('Neon DB linkTelegramUserByPhone error:', err);
+    }
+  }
+
+  // Local fallback
+  const user = await getUserByPhone(normPhone);
+  if (user) {
+    user.telegram_chat_id = rawId;
+    user.updated_at = now;
+    const local = getLocalUsers();
+    local[user.id] = user;
+    local[user.email] = user;
+    saveLocalUsers(local);
+    memoryUserMap.set(user.id, user);
+    memoryUserMap.set(user.email, user);
+    return user;
+  }
+
+  return null;
+}
+
+/**
+ * Retrieves the Bot Owner / Admin settings by Bot Token for AI key fallback
+ */
+export async function getBotAdminSettings(botToken?: string): Promise<UserRecord | null> {
+  const dbUrl = getDatabaseUrl();
+  const cleanToken = (botToken || '').trim();
+  if (dbUrl && cleanToken) {
+    try {
+      await initDatabase();
+      const sql = neon(dbUrl);
+      const rows = await sql`
+        SELECT * FROM users 
+        WHERE telegram_bot_token = ${cleanToken} 
+           OR TRIM(telegram_bot_token) = ${cleanToken}
         LIMIT 1
       `;
       if (rows && rows.length > 0) return rows[0] as UserRecord;
@@ -240,6 +357,18 @@ export async function getBotAdminSettings(botToken?: string): Promise<UserRecord
       console.error('Neon DB getBotAdminSettings error:', err);
     }
   }
+
+  // Memory & Local fallback
+  if (cleanToken) {
+    for (const user of Array.from(memoryUserMap.values())) {
+      if (user.telegram_bot_token?.trim() === cleanToken) return user;
+    }
+    const local = getLocalUsers();
+    for (const key of Object.keys(local)) {
+      if (local[key].telegram_bot_token?.trim() === cleanToken) return local[key];
+    }
+  }
+
   return null;
 }
 
@@ -398,6 +527,7 @@ export async function upsertGoogleUser(params: {
 export async function updateUserSettings(
   userId: string,
   settings: {
+    phone_number?: string;
     gemini_api_key?: string;
     model_name?: string;
     ocr_engine?: string;
@@ -418,6 +548,7 @@ export async function updateUserSettings(
       // Build dynamic update safely
       const updated = await sql`
         UPDATE users SET
+          phone_number = COALESCE(${settings.phone_number !== undefined ? settings.phone_number : null}, phone_number),
           gemini_api_key = COALESCE(${settings.gemini_api_key !== undefined ? settings.gemini_api_key : null}, gemini_api_key),
           model_name = COALESCE(${settings.model_name !== undefined ? settings.model_name : null}, model_name),
           ocr_engine = COALESCE(${settings.ocr_engine !== undefined ? settings.ocr_engine : null}, ocr_engine),
@@ -442,6 +573,7 @@ export async function updateUserSettings(
   const local = getLocalUsers();
   const existing = local[userId] || (await getUserById(userId));
   if (existing) {
+    if (settings.phone_number !== undefined) existing.phone_number = settings.phone_number;
     if (settings.gemini_api_key !== undefined) existing.gemini_api_key = settings.gemini_api_key;
     if (settings.model_name !== undefined) existing.model_name = settings.model_name;
     if (settings.ocr_engine !== undefined) existing.ocr_engine = settings.ocr_engine;

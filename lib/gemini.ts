@@ -92,7 +92,9 @@ export function normalizeCalendarEvent(raw: any): CalendarEvent {
  * Main Extraction Engine via Google Gemini Multimodal / Text Reasoning
  */
 export async function extractEventFromSource(request: ExtractionRequest): Promise<ExtractionResponse> {
-  const apiKey = request.apiKey || process.env.GEMINI_API_KEY;
+  let apiKey = (request.apiKey || process.env.GEMINI_API_KEY || '').trim();
+  apiKey = apiKey.replace(/^["']|["']$/g, '').trim();
+
   if (!apiKey) {
     return {
       success: false,
@@ -250,9 +252,6 @@ Format JSON yang Wajib Dikembalikan (HANYA JSON murni tanpa markdown):
   });
 }
 
-/**
- * Helper to call Google Gemini GenerateContent REST API with automatic model fallback
- */
 async function callGeminiGenerateContent(params: {
   apiKey: string;
   model: string;
@@ -260,18 +259,20 @@ async function callGeminiGenerateContent(params: {
   rawOcrText?: string;
   engineUsed?: 'gemini' | 'ocr_service' | 'hybrid';
 }): Promise<ExtractionResponse> {
+  const cleanApiKey = (params.apiKey || '').replace(/^["']|["']$/g, '').trim();
   const modelsToTry = [
     params.model,
-    'gemini-3.6-flash',
-    'gemini-1.5-flash',
     'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-2.5-flash',
+    'gemini-3.6-flash',
     'gemini-1.5-pro'
-  ].filter((m, i, arr) => arr.indexOf(m) === i); // Unique models
+  ].filter((m, i, arr) => m && arr.indexOf(m) === i); // Unique valid models
 
   let lastError = '';
 
   for (const currentModel of modelsToTry) {
-    const url = `${GEMINI_API_URL}/${currentModel}:generateContent?key=${encodeURIComponent(params.apiKey)}`;
+    const url = `${GEMINI_API_URL}/${currentModel}:generateContent?key=${encodeURIComponent(cleanApiKey)}`;
 
     try {
       const response = await fetch(url, {

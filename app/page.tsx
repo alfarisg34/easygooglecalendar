@@ -41,6 +41,7 @@ interface UserSession {
   picture?: string;
   hasGoogleCalendar: boolean;
   settings: {
+    phoneNumber?: string;
     geminiApiKey: string;
     modelName: string;
     ocrEngine: string;
@@ -134,6 +135,7 @@ export default function HomePage() {
 
   // Settings Form State
   const [settingsForm, setSettingsForm] = useState({
+    phoneNumber: '',
     geminiApiKey: '',
     modelName: 'gemini-3.6-flash',
     ocrEngine: 'gemini',
@@ -220,6 +222,7 @@ export default function HomePage() {
       if (data.authenticated && data.user) {
         setUser(data.user);
         setSettingsForm({
+          phoneNumber: data.user.settings?.phoneNumber || '',
           geminiApiKey: data.user.settings?.geminiApiKey || '',
           modelName: data.user.settings?.modelName || 'gemini-3.6-flash',
           ocrEngine: data.user.settings?.ocrEngine || 'gemini',
@@ -1279,7 +1282,25 @@ export default function HomePage() {
               )}
 
               <form onSubmit={handleSaveSettings}>
-                {/* 1. Google Gemini API Key */}
+                {/* 1. User Phone Number (Telegram Identifier) */}
+                <div className="form-group">
+                  <div className="form-label">
+                    <span>Nomor WhatsApp / HP Pengguna (Pengenal Telegram)</span>
+                    <span style={{ color: 'var(--signal-green)', fontSize: '0.75rem', fontWeight: 600 }}>📱 1-Tap Telegram Sync</span>
+                  </div>
+                  <input 
+                    type="text"
+                    className="form-control"
+                    value={settingsForm.phoneNumber}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, phoneNumber: e.target.value })}
+                    placeholder="Contoh: 081234567890 atau +6281234567890"
+                  />
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginTop: 4 }}>
+                    Digunakan sebagai pengenal akun saat Anda chat di Telegram. Cukup klik tombol <strong>"📱 Bagikan Kontak Saya"</strong> di bot Telegram untuk menghubungkan secara instan.
+                  </div>
+                </div>
+
+                {/* 2. Google Gemini API Key */}
                 <div className="form-group">
                   <div className="form-label">
                     <span>Google Gemini API Key (BYOK) *</span>
@@ -1315,7 +1336,7 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                {/* 2. Model Selection & OCR Engine */}
+                {/* 3. Model Selection & OCR Engine */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div className="form-group">
                     <div className="form-label">
@@ -1326,8 +1347,9 @@ export default function HomePage() {
                       value={settingsForm.modelName}
                       onChange={(e) => setSettingsForm({ ...settingsForm, modelName: e.target.value })}
                     >
-                      <option value="gemini-3.6-flash">Gemini 3.6 Flash (Direkomendasikan)</option>
-                      <option value="gemini-2.5-flash">Gemini 2.5 Flash (Cepat)</option>
+                      <option value="gemini-2.0-flash">Gemini 2.0 Flash (Direkomendasikan & Cepat)</option>
+                      <option value="gemini-1.5-flash">Gemini 1.5 Flash (Stabil)</option>
+                      <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
                       <option value="gemini-1.5-pro">Gemini 1.5 Pro (Penalaran Kompleks)</option>
                     </select>
                   </div>
@@ -1347,7 +1369,7 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                {/* 3. Target Calendar ID */}
+                {/* 4. Target Calendar ID */}
                 <div className="form-group">
                   <div className="form-label">
                     <span>Target Google Calendar ID</span>
@@ -1364,7 +1386,7 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                {/* 4. Telegram Bot Token */}
+                {/* 5. Telegram Bot Token */}
                 <div className="form-group">
                   <div className="form-label">
                     <span>Telegram Bot Token (Opsional)</span>
@@ -1429,13 +1451,14 @@ export default function HomePage() {
 
               <div style={{ background: 'var(--bg-inset)', border: 'var(--border-chassis)', padding: '1.25rem', borderRadius: 4, marginBottom: '1.5rem' }}>
                 <h4 style={{ fontSize: '0.9rem', fontWeight: 600, color: '#FFF', marginBottom: '0.75rem' }}>
-                  Langkah-Langkah Pemasangan:
+                  Langkah-Langkah Pemasangan & Koneksi:
                 </h4>
                 <ol style={{ paddingLeft: '1.25rem', fontSize: '0.85rem', color: 'var(--text-dim)', lineHeight: 1.8 }}>
                   <li>Buka Telegram dan buat bot baru melalui <strong>@BotFather</strong> dengan perintah <code>/newbot</code>.</li>
                   <li>Salin <strong>HTTP API Bot Token</strong> dan tempelkan ke form di tab <strong>Pengaturan & Kredensial</strong>.</li>
+                  <li>Isi juga <strong>Nomor WhatsApp / HP</strong> dan <strong>Google Gemini API Key</strong> Anda pada menu Pengaturan, lalu klik <strong>Simpan Konfigurasi</strong>.</li>
                   <li>Klik tombol <strong>"Pasang Webhook Otomatis"</strong> di bawah ini.</li>
-                  <li>Mulai chat dengan bot Anda dan ketik <code>/connect</code> untuk menghubungkan akun Google Calendar Anda!</li>
+                  <li>Buka chat bot Anda di Telegram, lalu tekan tombol <strong>"📱 Bagikan Kontak Saya"</strong> untuk verifikasi instan, atau ketik <code>/connect</code>!</li>
                 </ol>
               </div>
 

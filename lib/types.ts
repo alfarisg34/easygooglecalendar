@@ -68,6 +68,12 @@ export interface TelegramUpdate {
       mime_type?: string;
       file_size?: number;
     };
+    contact?: {
+      phone_number: string;
+      first_name: string;
+      last_name?: string;
+      user_id?: number;
+    };
     photo?: Array<{
       file_id: string;
       file_unique_id: string;
@@ -77,3 +83,10 @@ export interface TelegramUpdate {
     }>;
   };
 }
+
+export interface TelegramReplyButton {
+  text: string;
+  request_contact?: boolean;
+  request_location?: boolean;
+}
+

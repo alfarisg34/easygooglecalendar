@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     success: true,
     settings: {
+      phoneNumber: user.phone_number || '',
       geminiApiKey: user.gemini_api_key || '',
       modelName: user.model_name || 'gemini-3.6-flash',
       ocrEngine: user.ocr_engine || 'gemini',
@@ -38,6 +39,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const {
+      phoneNumber,
       geminiApiKey,
       modelName,
       ocrEngine,
@@ -48,13 +50,14 @@ export async function POST(req: NextRequest) {
     } = body;
 
     const updatedUser = await updateUserSettings(session.userId, {
-      gemini_api_key: geminiApiKey,
+      phone_number: typeof phoneNumber === 'string' ? phoneNumber.trim() : phoneNumber,
+      gemini_api_key: typeof geminiApiKey === 'string' ? geminiApiKey.replace(/^["']|["']$/g, '').trim() : geminiApiKey,
       model_name: modelName,
       ocr_engine: ocrEngine,
       ocr_service_url: ocrServiceUrl,
-      calendar_id: calendarId,
-      telegram_bot_token: telegramBotToken,
-      telegram_chat_id: telegramChatId
+      calendar_id: typeof calendarId === 'string' ? calendarId.trim() : calendarId,
+      telegram_bot_token: typeof telegramBotToken === 'string' ? telegramBotToken.trim() : telegramBotToken,
+      telegram_chat_id: typeof telegramChatId === 'string' ? telegramChatId.trim() : telegramChatId
     });
 
     if (!updatedUser) {
@@ -65,6 +68,7 @@ export async function POST(req: NextRequest) {
       success: true,
       message: 'Pengaturan berhasil disimpan ke database Neon PostgreSQL!',
       settings: {
+        phoneNumber: updatedUser.phone_number || '',
         geminiApiKey: updatedUser.gemini_api_key || '',
         modelName: updatedUser.model_name || 'gemini-3.6-flash',
         ocrEngine: updatedUser.ocr_engine || 'gemini',
