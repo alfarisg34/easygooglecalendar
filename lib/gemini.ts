@@ -256,15 +256,14 @@ Format JSON yang Wajib Dikembalikan (HANYA JSON murni tanpa markdown):
  * Normalizes model name to clean, supported Gemini model identifiers
  */
 export function normalizeModelName(rawModel?: string): string {
-  if (!rawModel) return 'gemini-2.0-flash';
+  if (!rawModel) return 'gemini-3.6-flash';
   const m = String(rawModel).trim().toLowerCase().replace(/^models\//, '');
-  if (m === 'gemini-3.6-flash' || m.includes('3.6') || m.includes('3.5') || m.includes('2.5')) return 'gemini-2.0-flash';
-  if (m.includes('2.0-flash-lite') || m.includes('lite')) return 'gemini-2.0-flash-lite';
-  if (m.includes('2.0')) return 'gemini-2.0-flash';
-  if (m.includes('1.5-pro')) return 'gemini-1.5-pro-latest';
-  if (m.includes('1.5-flash')) return 'gemini-1.5-flash';
-  if (m.includes('1.5')) return 'gemini-1.5-flash';
-  return m || 'gemini-2.0-flash';
+  if (m.includes('3.7')) return 'gemini-3.7-flash';
+  if (m.includes('3.6')) return 'gemini-3.6-flash';
+  if (m.includes('3.5')) return 'gemini-3.5-flash';
+  if (m.includes('3.1')) return 'gemini-3.1-flash-lite';
+  if (m.includes('latest')) return 'gemini-flash-latest';
+  return m || 'gemini-3.6-flash';
 }
 
 async function callGeminiGenerateContent(params: {
@@ -277,11 +276,12 @@ async function callGeminiGenerateContent(params: {
   const cleanApiKey = (params.apiKey || '').replace(/^["']|["']$/g, '').trim();
   const primaryModel = normalizeModelName(params.model);
 
-  // Valid official fallback models
+  // Active 2026 Google Generative Language models with multi-tier quota fallback
   const modelsToTry = [
     primaryModel,
-    'gemini-2.0-flash',
-    'gemini-1.5-flash'
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-3.1-flash-lite'
   ].filter((m, i, arr) => m && arr.indexOf(m) === i);
 
   let lastError = '';
@@ -312,15 +312,15 @@ async function callGeminiGenerateContent(params: {
 
       if (!response.ok) {
         const errorMsg = data.error?.message || `Google Gemini API Error (${response.status}): ${response.statusText}`;
-        console.error(`Gemini API Error with model ${currentModel} (${response.status}):`, errorMsg);
+        console.warn(`Gemini API returned HTTP ${response.status} with model ${currentModel}: ${errorMsg}. Trying next active model in chain...`);
+        lastError = errorMsg;
 
-        // Only fallback if the model itself was not found (404)
-        if (response.status === 404) {
-          lastError = errorMsg;
+        // If error is 404 (model unavailable), 429 (rate-limit / quota on this model), or 503 (temporary high demand), try next active model!
+        if (response.status === 404 || response.status === 429 || response.status === 503) {
           continue;
         }
 
-        // For all other errors (400, 401, 403, 429, 500, etc.), return the exact real error directly!
+        // For auth or payload errors (400, 401, 403), return directly
         return {
           success: false,
           error: `Gagal memproses dengan Google Gemini (${currentModel}): ${errorMsg}`
