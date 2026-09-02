@@ -138,7 +138,7 @@ export default function HomePage() {
   const [settingsForm, setSettingsForm] = useState({
     phoneNumber: '',
     geminiApiKey: '',
-    modelName: 'gemini-2.0-flash',
+    modelName: 'gemini-3.6-flash',
     ocrEngine: 'gemini',
     ocrServiceUrl: '',
     calendarId: 'primary',
@@ -1395,10 +1395,10 @@ export default function HomePage() {
                       value={settingsForm.modelName}
                       onChange={(e) => setSettingsForm({ ...settingsForm, modelName: e.target.value })}
                     >
-                      <option value="gemini-2.0-flash">Gemini 2.0 Flash (Direkomendasikan & Cepat)</option>
-                      <option value="gemini-1.5-flash">Gemini 1.5 Flash (Stabil & Standar)</option>
-                      <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (Ringan)</option>
-                      <option value="gemini-1.5-pro-latest">Gemini 1.5 Pro (Penalaran Kompleks)</option>
+                      <option value="gemini-3.6-flash">Gemini 3.6 Flash (Default & Cepat)</option>
+                      <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                      <option value="gemini-1.5-flash">Gemini 1.5 Flash (Stabil)</option>
+                      <option value="gemini-1.5-pro">Gemini 1.5 Pro (Penalaran Kompleks)</option>
                     </select>
                   </div>
 

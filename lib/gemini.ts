@@ -281,9 +281,7 @@ async function callGeminiGenerateContent(params: {
   const modelsToTry = [
     primaryModel,
     'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-2.0-flash-lite',
-    'gemini-1.5-flash-latest'
+    'gemini-1.5-flash'
   ].filter((m, i, arr) => m && arr.indexOf(m) === i);
 
   let lastError = '';
@@ -313,9 +311,20 @@ async function callGeminiGenerateContent(params: {
       const data = await response.json();
 
       if (!response.ok) {
-        lastError = data.error?.message || `Google Gemini API Error (${response.status}): ${response.statusText}`;
-        console.warn(`Model ${currentModel} failed: ${lastError}. Trying fallback model...`);
-        continue;
+        const errorMsg = data.error?.message || `Google Gemini API Error (${response.status}): ${response.statusText}`;
+        console.error(`Gemini API Error with model ${currentModel} (${response.status}):`, errorMsg);
+
+        // Only fallback if the model itself was not found (404)
+        if (response.status === 404) {
+          lastError = errorMsg;
+          continue;
+        }
+
+        // For all other errors (400, 401, 403, 429, 500, etc.), return the exact real error directly!
+        return {
+          success: false,
+          error: `Gagal memproses dengan Google Gemini (${currentModel}): ${errorMsg}`
+        };
       }
 
       const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -336,7 +345,7 @@ async function callGeminiGenerateContent(params: {
       };
     } catch (err: any) {
       lastError = err.message;
-      console.warn(`Network error with model ${currentModel}: ${err.message}. Trying next...`);
+      console.warn(`Network error with model ${currentModel}: ${err.message}.`);
     }
   }
 
