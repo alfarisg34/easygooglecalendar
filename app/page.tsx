@@ -527,6 +527,16 @@ export default function HomePage() {
           </div>
 
           <div className="masthead-actions">
+            <a 
+              href="https://t.me/pdftogooglecalendarinvitationbot" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="btn-tactile"
+              style={{ textDecoration: 'none', color: '#FFF', display: 'flex', alignItems: 'center', gap: '0.4rem', border: '1px solid rgba(0, 136, 204, 0.4)', background: 'rgba(0, 136, 204, 0.12)' }}
+            >
+              <Bot size={14} color="#0088cc" />
+              <span>@pdftogooglecalendarinvitationbot</span>
+            </a>
             <div className="status-badge-tag badge-online">
               <Database size={13} />
               <span>{dbStatus?.connected ? 'Neon PostgreSQL Ready' : 'Database Ready'}</span>
@@ -566,13 +576,13 @@ export default function HomePage() {
             <div>
               <div className="hero-eyebrow">
                 <Sparkles size={14} />
-                <span>BYOK ARCHITECTURE // AI VISION & NEON DB</span>
+                <span>BYOK ARCHITECTURE // AI VISION & TELEGRAM BOT</span>
               </div>
               <h1 className="hero-headline">
                 Ekstraksi Surat Dinas & Undangan Otomatis ke <em>Google Calendar</em>.
               </h1>
               <p className="hero-desc">
-                Konversi dokumen PDF nota dinas dinas, flyer poster bimtek/webinar, dan chat broadcast secara instan menjadi event kalender terstruktur dengan kecerdasan Google Gemini AI.
+                Konversi dokumen PDF nota dinas dinas, flyer poster bimtek/webinar, dan chat broadcast secara instan menjadi event kalender terstruktur dengan kecerdasan Google Gemini AI & Bot Telegram <strong>@pdftogooglecalendarinvitationbot</strong>.
               </p>
 
               <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -584,6 +594,17 @@ export default function HomePage() {
                     <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
                   </svg>
                   <span>Masuk dengan Google</span>
+                </a>
+
+                <a 
+                  href="https://t.me/pdftogooglecalendarinvitationbot" 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="btn-tactile"
+                  style={{ textDecoration: 'none', background: 'rgba(0, 136, 204, 0.15)', color: '#FFF', border: '1px solid rgba(0, 136, 204, 0.4)', padding: '0.8rem 1.25rem', fontSize: '0.875rem' }}
+                >
+                  <Bot size={16} color="#0088cc" />
+                  <span>Buka Bot Telegram ↗</span>
                 </a>
               </div>
             </div>
@@ -688,6 +709,19 @@ export default function HomePage() {
 
         {/* User Profile & Action Bar */}
         <div className="masthead-actions">
+          {/* Telegram Bot Quick Link */}
+          <a 
+            href="https://t.me/pdftogooglecalendarinvitationbot" 
+            target="_blank" 
+            rel="noopener noreferrer" 
+            className="btn-tactile"
+            style={{ textDecoration: 'none', color: '#FFF', display: 'flex', alignItems: 'center', gap: '0.4rem', border: '1px solid rgba(0, 136, 204, 0.4)', background: 'rgba(0, 136, 204, 0.12)' }}
+            title="Buka Chat Bot Telegram"
+          >
+            <Bot size={14} color="#0088cc" />
+            <span>@pdftogooglecalendarinvitationbot</span>
+          </a>
+
           {/* Google Calendar Connected Status Badge */}
           {user.hasGoogleCalendar ? (
             <div className="status-badge-tag badge-success">
@@ -773,6 +807,26 @@ export default function HomePage() {
           ---------------------------------------------------- */}
       {activeView === 'extract' && (
         <div>
+          {/* Telegram Bot Quick Banner */}
+          <div style={{ background: 'rgba(0, 136, 204, 0.08)', border: '1px solid rgba(0, 136, 204, 0.25)', padding: '0.85rem 1.15rem', borderRadius: 4, marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+              <Bot size={20} color="#0088cc" />
+              <span style={{ fontSize: '0.8125rem', color: '#FFF' }}>
+                💡 <strong>Ekstraksi via Ponsel:</strong> Kirimkan surat dinas PDF atau poster flyer ke Bot Telegram <strong>@pdftogooglecalendarinvitationbot</strong> untuk penjadwalan otomatis (*0-Click Sync*).
+              </span>
+            </div>
+            <a 
+              href="https://t.me/pdftogooglecalendarinvitationbot" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="btn-tactile"
+              style={{ textDecoration: 'none', background: '#0088cc', color: '#FFF', border: 'none', fontSize: '0.8rem', padding: '0.45rem 0.95rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+            >
+              <ExternalLink size={13} />
+              <span>Buka @pdftogooglecalendarinvitationbot</span>
+            </a>
+          </div>
+
           {/* Missing API Key Alert */}
           {!settingsForm.geminiApiKey && (
             <div style={{ background: 'rgba(255, 158, 11, 0.1)', border: '1px solid rgba(255, 158, 11, 0.3)', padding: '1rem 1.25rem', borderRadius: 4, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
@@ -1493,8 +1547,41 @@ export default function HomePage() {
             </div>
 
             <div className="chassis-body">
+              {/* Official Telegram Bot Card */}
+              <div style={{ background: 'rgba(0, 136, 204, 0.12)', border: '1px solid rgba(0, 136, 204, 0.35)', borderRadius: 6, padding: '1.25rem 1.5rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1.25rem', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#0088cc', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFF', flexShrink: 0, boxShadow: '0 0 15px rgba(0,136,204,0.4)' }}>
+                    <Bot size={26} />
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 2 }}>
+                      <span style={{ fontSize: '1.05rem', fontWeight: 700, color: '#FFF' }}>
+                        @pdftogooglecalendarinvitationbot
+                      </span>
+                      <span className="status-badge-tag badge-online" style={{ fontSize: '0.7rem' }}>
+                        ● Aktif & Siap
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>
+                      Bot Telegram resmi EasyCal untuk ekstraksi surat dinas PDF, poster flyer & undangan rapat.
+                    </div>
+                  </div>
+                </div>
+
+                <a 
+                  href="https://t.me/pdftogooglecalendarinvitationbot" 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="btn-tactile btn-primary"
+                  style={{ background: '#0088cc', borderColor: '#0088cc', color: '#FFF', textDecoration: 'none', padding: '0.75rem 1.5rem', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                >
+                  <ExternalLink size={16} />
+                  <span>Buka Bot di Telegram ↗</span>
+                </a>
+              </div>
+
               <p style={{ fontSize: '0.875rem', color: 'var(--text-dim)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
-                Dengan menghubungkan Bot Telegram, Anda cukup mengirim dokumen surat dinas PDF, foto poster, atau meneruskan pesan chat undangan ke bot di Telegram. Agenda akan otomatis diekstrak dan dijadwalkan ke Google Calendar Anda secara <strong>0-Click</strong>.
+                Dengan menghubungkan Bot Telegram, Anda cukup mengirim dokumen surat dinas PDF, foto poster, atau meneruskan pesan chat undangan ke <a href="https://t.me/pdftogooglecalendarinvitationbot" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--signal-blue)', fontWeight: 600 }}>@pdftogooglecalendarinvitationbot</a>. Agenda akan otomatis diekstrak dan dijadwalkan ke Google Calendar Anda secara <strong>0-Click</strong>.
               </p>
 
               <div style={{ background: 'var(--bg-inset)', border: 'var(--border-chassis)', padding: '1.25rem', borderRadius: 4, marginBottom: '1.5rem' }}>
@@ -1502,11 +1589,11 @@ export default function HomePage() {
                   Langkah-Langkah Pemasangan & Koneksi:
                 </h4>
                 <ol style={{ paddingLeft: '1.25rem', fontSize: '0.85rem', color: 'var(--text-dim)', lineHeight: 1.8 }}>
-                  <li>Buka Telegram dan buat bot baru melalui <strong>@BotFather</strong> dengan perintah <code>/newbot</code>.</li>
-                  <li>Salin <strong>HTTP API Bot Token</strong> dan tempelkan ke form di tab <strong>Pengaturan & Kredensial</strong>.</li>
-                  <li>Isi juga <strong>Nomor WhatsApp / HP</strong> dan <strong>Google Gemini API Key</strong> Anda pada menu Pengaturan, lalu klik <strong>Simpan Konfigurasi</strong>.</li>
-                  <li>Klik tombol <strong>"Pasang Webhook Otomatis"</strong> di bawah ini.</li>
-                  <li>Buka chat bot Anda di Telegram, lalu tekan tombol <strong>"📱 Bagikan Kontak Saya"</strong> untuk verifikasi instan, atau ketik <code>/connect</code>!</li>
+                  <li>Isi <strong>Nomor WhatsApp / HP</strong> dan <strong>Google Gemini API Key</strong> Anda pada tab <strong>Pengaturan & Kredensial</strong>, lalu klik <strong>Simpan Konfigurasi</strong>.</li>
+                  <li>Buka chat bot <a href="https://t.me/pdftogooglecalendarinvitationbot" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--signal-blue)' }}>@pdftogooglecalendarinvitationbot</a> di aplikasi Telegram Anda.</li>
+                  <li>Tekan tombol <strong>"📱 Bagikan Kontak Saya"</strong> untuk verifikasi nomor HP instan (atau ketik <code>/connect</code>).</li>
+                  <li>Kirimkan berkas surat dinas PDF atau poster flyer ke bot kapan saja untuk penjadwalan otomatis! 🚀</li>
+                  <li style={{ color: 'var(--text-faint)', marginTop: 4 }}><em>(Opsional)</em> Jika Anda ingin menggunakan bot Telegram kustom sendiri, isi Token dari @BotFather di Pengaturan lalu klik tombol "Pasang Webhook Otomatis" di bawah.</li>
                 </ol>
               </div>
 
