@@ -7,6 +7,7 @@ import { getSessionFromRequest } from '@/lib/auth-session';
 import { getUserById, getUserByEmail, saveExtractedEvent, getRecentExtractedEventsForUser } from '@/lib/db';
 import { ExtractionRequest } from '@/lib/types';
 import { findDuplicateEvent } from '@/lib/duplicate-detector';
+import { createEventFolderAndUpload } from '@/lib/google-drive-api';
 
 export const maxDuration = 60; // 60 seconds serverless timeout
 
@@ -151,6 +152,7 @@ export async function POST(req: NextRequest) {
     }
 
     let autoSyncResult: any = null;
+    let gdriveResult: any = null;
 
     // Check if auto-sync to Google Calendar is active for this user
     if (autoSync || userId) {
@@ -164,6 +166,24 @@ export async function POST(req: NextRequest) {
             calendarId: customCalendarId,
             htmlLink: directInsert.htmlLink
           };
+        }
+
+        // Create Google Drive event folder & upload source file / text as .txt
+        try {
+          gdriveResult = await createEventFolderAndUpload({
+            userId,
+            event: result.event,
+            parentFolderId: dbUser?.gdrive_root_folder_id,
+            fileData: {
+              base64Data: extractionParams.base64Data,
+              textContent: extractionParams.text,
+              fileName: extractionParams.fileName,
+              mimeType: extractionParams.mimeType,
+              sourceType: extractionParams.sourceType
+            }
+          });
+        } catch (driveErr) {
+          console.error('Failed to create Drive folder / upload in API extract:', driveErr);
         }
       }
     }
@@ -186,8 +206,12 @@ export async function POST(req: NextRequest) {
           description: result.event.description,
           google_calendar_url: autoSyncResult?.htmlLink || result.event.google_calendar_url,
           synced_to_calendar: Boolean(autoSyncResult?.synced),
+          gdrive_folder_id: gdriveResult?.folderId,
+          gdrive_folder_url: gdriveResult?.folderUrl,
+          gdrive_file_id: gdriveResult?.fileId,
+          gdrive_file_url: gdriveResult?.fileUrl,
           source_type: extractionParams.sourceType || 'web',
-          file_name: extractionParams.fileName || (extractionParams.sourceType === 'text' ? 'Teks Undangan' : 'Dokumen')
+          file_name: extractionParams.fileName || (extractionParams.sourceType === 'text' ? 'salinan_undangan.txt' : 'Dokumen')
         });
       } catch (err) {
         console.error('Failed to save extracted event record:', err);
@@ -198,6 +222,7 @@ export async function POST(req: NextRequest) {
       ...result,
       icsContent,
       autoSyncResult,
+      gdriveResult,
       savedRecord
     });
   } catch (err: any) {

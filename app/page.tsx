@@ -7,7 +7,7 @@ import {
   ExternalLink, Trash2, RefreshCw, Clock, MapPin, 
   Video, Users, BookOpen, AlertCircle, Send, CheckCircle2,
   LogOut, Shield, Database, Settings, ArrowRight, Eye, EyeOff,
-  CalendarCheck, Cpu, ChevronLeft, ChevronRight, AlertTriangle
+  CalendarCheck, Cpu, ChevronLeft, ChevronRight, AlertTriangle, Folder
 } from 'lucide-react';
 import { CalendarEvent } from '@/lib/types';
 import { DateTime } from 'luxon';
@@ -29,6 +29,10 @@ interface ExtractedEventItem {
   google_calendar_url?: string;
   google_event_id?: string;
   synced_to_calendar?: boolean;
+  gdrive_folder_id?: string;
+  gdrive_folder_url?: string;
+  gdrive_file_id?: string;
+  gdrive_file_url?: string;
   source_type?: string; // 'pdf' | 'image' | 'text' | 'telegram'
   file_name?: string;
   created_at: string;
@@ -47,6 +51,8 @@ interface UserSession {
     ocrEngine: string;
     ocrServiceUrl: string;
     calendarId: string;
+    gdriveRootFolderId?: string;
+    gdriveRootFolderUrl?: string;
     telegramBotToken: string;
     telegramChatId: string;
   };
@@ -132,6 +138,7 @@ export default function HomePage() {
   const [extractedEvent, setExtractedEvent] = useState<CalendarEvent | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [autoSyncResult, setAutoSyncResult] = useState<any>(null);
+  const [gdriveResult, setGdriveResult] = useState<any>(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [duplicateWarning, setDuplicateWarning] = useState<{
     isDuplicate: boolean;
@@ -148,6 +155,7 @@ export default function HomePage() {
     ocrEngine: 'gemini',
     ocrServiceUrl: '',
     calendarId: 'primary',
+    gdriveRootFolderUrl: '',
     telegramBotToken: '',
     telegramChatId: ''
   });
@@ -235,6 +243,7 @@ export default function HomePage() {
           ocrEngine: data.user.settings?.ocrEngine || 'gemini',
           ocrServiceUrl: data.user.settings?.ocrServiceUrl || '',
           calendarId: data.user.settings?.calendarId || 'primary',
+          gdriveRootFolderUrl: data.user.settings?.gdriveRootFolderUrl || data.user.settings?.gdriveRootFolderId || '',
           telegramBotToken: data.user.settings?.telegramBotToken || '',
           telegramChatId: data.user.settings?.telegramChatId || ''
         });
@@ -344,6 +353,7 @@ export default function HomePage() {
     setIsLoading(true);
     setErrorMessage('');
     setDuplicateWarning(null);
+    setGdriveResult(null);
     setExtractProgress(15);
     setStatusMessage(isForceSync ? 'Memaksa penyimpanan ulang jadwal baru...' : 'Mengunggah dokumen & menginisialisasi Google Gemini AI...');
 
@@ -403,6 +413,9 @@ export default function HomePage() {
         setExtractedEvent(data.event);
         if (data.autoSyncResult) {
           setAutoSyncResult(data.autoSyncResult);
+        }
+        if (data.gdriveResult) {
+          setGdriveResult(data.gdriveResult);
         }
         fetchEventsHistory(1);
       }
@@ -1193,18 +1206,33 @@ export default function HomePage() {
                         Agenda terbaru otomatis tersimpan ke Google Calendar <strong>({autoSyncResult.email})</strong>
                       </span>
                     </div>
-                    {autoSyncResult.htmlLink && (
-                      <a 
-                        href={autoSyncResult.htmlLink} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="btn-tactile btn-success"
-                        style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem', textDecoration: 'none' }}
-                      >
-                        <ExternalLink size={12} />
-                        <span>Buka Event</span>
-                      </a>
-                    )}
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      {autoSyncResult.htmlLink && (
+                        <a 
+                          href={autoSyncResult.htmlLink} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="btn-tactile btn-success"
+                          style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem', textDecoration: 'none' }}
+                        >
+                          <ExternalLink size={12} />
+                          <span>Buka Event</span>
+                        </a>
+                      )}
+                      {gdriveResult?.folderUrl && (
+                        <a 
+                          href={gdriveResult.folderUrl} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="btn-tactile"
+                          style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem', textDecoration: 'none', background: 'rgba(0, 204, 102, 0.18)', border: '1px solid rgba(0, 204, 102, 0.4)', color: '#FFF' }}
+                          title="Buka folder kegiatan di Google Drive"
+                        >
+                          <Folder size={12} />
+                          <span>Folder Drive</span>
+                        </a>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -1357,6 +1385,34 @@ export default function HomePage() {
                                 <Calendar size={12} />
                                 <span>Buka di Google Calendar</span>
                               </a>
+
+                              {item.gdrive_folder_url && (
+                                <a 
+                                  href={item.gdrive_folder_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="btn-tactile btn-success"
+                                  style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem', textDecoration: 'none' }}
+                                  title="Buka folder kegiatan di Google Drive"
+                                >
+                                  <Folder size={12} />
+                                  <span>Folder Drive</span>
+                                </a>
+                              )}
+
+                              {item.gdrive_file_url && (
+                                <a 
+                                  href={item.gdrive_file_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="btn-tactile"
+                                  style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem', textDecoration: 'none' }}
+                                  title="Lihat berkas terunggah di Google Drive"
+                                >
+                                  <FileText size={12} />
+                                  <span>Berkas</span>
+                                </a>
+                              )}
 
                               <button 
                                 onClick={() => handleDownloadSpecificICS(item)}
@@ -1573,7 +1629,25 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                {/* 5. Telegram Bot Token */}
+                {/* 5. Google Drive Root Folder (Folder Rumah) */}
+                <div className="form-group">
+                  <div className="form-label">
+                    <span>Folder Rumah Google Drive (Opsional)</span>
+                    <span style={{ color: 'var(--signal-green)', fontSize: '0.72rem' }}>Otomasi Arsip Berkas</span>
+                  </div>
+                  <input 
+                    type="text"
+                    className="form-control"
+                    value={settingsForm.gdriveRootFolderUrl}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, gdriveRootFolderUrl: e.target.value })}
+                    placeholder="https://drive.google.com/drive/folders/1ABCxyz... atau ID folder"
+                  />
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginTop: 4 }}>
+                    Folder induk tempat EasyCal otomatis membuat sub-folder <code>YYYY-MM-DD - Judul Kegiatan</code> dan mengunggah berkas PDF, foto flyer, atau teks undangan (.txt). Kosongkan jika ingin disimpan di root Google Drive Anda.
+                  </div>
+                </div>
+
+                {/* 6. Telegram Bot Token */}
                 <div className="form-group">
                   <div className="form-label">
                     <span>Telegram Bot Token (Opsional)</span>

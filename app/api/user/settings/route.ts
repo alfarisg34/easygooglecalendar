@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest } from '@/lib/auth-session';
 import { getUserById, getUserByEmail, updateUserSettings } from '@/lib/db';
+import { parseGoogleDriveFolderId } from '@/lib/google-drive-api';
 
 export async function GET(req: NextRequest) {
   const session = await getSessionFromRequest(req);
@@ -24,6 +25,8 @@ export async function GET(req: NextRequest) {
       ocrEngine: user.ocr_engine || 'gemini',
       ocrServiceUrl: user.ocr_service_url || '',
       calendarId: user.calendar_id || 'primary',
+      gdriveRootFolderId: user.gdrive_root_folder_id || '',
+      gdriveRootFolderUrl: user.gdrive_root_folder_url || '',
       telegramBotToken: user.telegram_bot_token || '',
       telegramChatId: user.telegram_chat_id || ''
     }
@@ -45,9 +48,18 @@ export async function POST(req: NextRequest) {
       ocrEngine,
       ocrServiceUrl,
       calendarId,
+      gdriveRootFolderUrl,
       telegramBotToken,
       telegramChatId
     } = body;
+
+    let parsedDriveId = undefined;
+    let cleanDriveUrl = undefined;
+    if (gdriveRootFolderUrl !== undefined) {
+      const rawUrl = String(gdriveRootFolderUrl).trim();
+      parsedDriveId = parseGoogleDriveFolderId(rawUrl) || rawUrl;
+      cleanDriveUrl = parsedDriveId ? `https://drive.google.com/drive/folders/${parsedDriveId}` : rawUrl;
+    }
 
     const updatedUser = await updateUserSettings(session.userId, {
       phone_number: typeof phoneNumber === 'string' ? phoneNumber.trim() : phoneNumber,
@@ -56,6 +68,8 @@ export async function POST(req: NextRequest) {
       ocr_engine: ocrEngine,
       ocr_service_url: ocrServiceUrl,
       calendar_id: typeof calendarId === 'string' ? calendarId.trim() : calendarId,
+      gdrive_root_folder_id: parsedDriveId,
+      gdrive_root_folder_url: cleanDriveUrl,
       telegram_bot_token: typeof telegramBotToken === 'string' ? telegramBotToken.trim() : telegramBotToken,
       telegram_chat_id: typeof telegramChatId === 'string' ? telegramChatId.trim() : telegramChatId
     });
@@ -74,6 +88,8 @@ export async function POST(req: NextRequest) {
         ocrEngine: updatedUser.ocr_engine || 'gemini',
         ocrServiceUrl: updatedUser.ocr_service_url || '',
         calendarId: updatedUser.calendar_id || 'primary',
+        gdriveRootFolderId: updatedUser.gdrive_root_folder_id || '',
+        gdriveRootFolderUrl: updatedUser.gdrive_root_folder_url || '',
         telegramBotToken: updatedUser.telegram_bot_token || '',
         telegramChatId: updatedUser.telegram_chat_id || ''
       }

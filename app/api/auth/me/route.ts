@@ -42,6 +42,8 @@ export async function GET(req: NextRequest) {
           ocrEngine: user.ocr_engine || 'gemini',
           ocrServiceUrl: user.ocr_service_url || '',
           calendarId: user.calendar_id || 'primary',
+          gdriveRootFolderId: user.gdrive_root_folder_id || '',
+          gdriveRootFolderUrl: user.gdrive_root_folder_url || '',
           telegramBotToken: user.telegram_bot_token || '',
           telegramChatId: user.telegram_chat_id || ''
         },

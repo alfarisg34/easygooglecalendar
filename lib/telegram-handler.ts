@@ -3,8 +3,9 @@ import { extractEventFromSource } from './gemini';
 import { DateTime } from 'luxon';
 import { getUserGoogleAuth, deleteUserGoogleAuth } from './token-store';
 import { insertGoogleCalendarEvent } from './google-calendar-api';
-import { getUserByTelegram, getBotAdminSettings, disconnectTelegramUser, saveExtractedEvent, linkTelegramUserByPhone, getRecentExtractedEventsForUser } from './db';
+import { getUserByTelegram, getBotAdminSettings, disconnectTelegramUser, saveExtractedEvent, linkTelegramUserByPhone, getRecentExtractedEventsForUser, updateUserSettings } from './db';
 import { findDuplicateEvent, DuplicateDetectionResult } from './duplicate-detector';
+import { createEventFolderAndUpload, parseGoogleDriveFolderId } from './google-drive-api';
 
 const TELEGRAM_API_URL = 'https://api.telegram.org';
 
@@ -463,6 +464,75 @@ export async function handleTelegramWebhook(
     return { ok: true };
   }
 
+  // Command: /setdrive (Atur folder rumah Google Drive)
+  if (cleanText.startsWith('/setdrive') || cleanText.startsWith('/folder')) {
+    const rawInput = text.replace(/^\/(?:setdrive|folder)\s*/i, '').trim();
+    if (!rawInput) {
+      const activeFolderUrl = dbUser?.gdrive_root_folder_url;
+      await sendTelegramMessage({
+        botToken,
+        chatId,
+        text: `📁 *PANDUAN PENGATURAN FOLDER RUMAH GOOGLE DRIVE*\n\n` +
+          `Setiap berkas kegiatan baru yang bukan duplikat akan otomatis dibuatkan folder kegiatan di dalam *folder rumah* ini, lalu dokumen aslinya (PDF, foto flyer, atau teks sebagai \`.txt\`) akan otomatis diunggah ke situ!\n\n` +
+          `💡 *Cara Mengatur:*\nKetik perintah diikuti link folder Google Drive Anda, contoh:\n` +
+          `\`/setdrive https://drive.google.com/drive/folders/1ABCxyz-12345\`\n\n` +
+          `📌 *Folder Saat Ini*: ${activeFolderUrl ? `[Buka Folder Rumah](${activeFolderUrl})` : '_(Belum diatur. Sistem otomatis menyimpannya di root Google Drive)_'}`,
+        inlineButtons: activeFolderUrl ? [{ text: '📁 Buka Folder Rumah', url: activeFolderUrl }] : undefined
+      });
+      return { ok: true };
+    }
+
+    const folderId = parseGoogleDriveFolderId(rawInput);
+    if (!folderId) {
+      await sendTelegramMessage({
+        botToken,
+        chatId,
+        text: `❌ *Format Link Folder Tidak Dikenali*\nMohon kirimkan link folder Google Drive yang valid, contoh:\n\`/setdrive https://drive.google.com/drive/folders/1ABCxyz-12345\``
+      });
+      return { ok: true };
+    }
+
+    const folderUrl = `https://drive.google.com/drive/folders/${folderId}`;
+    const targetUserId = String(userAuth?.userId || dbUser?.id || `tg_${userId}`);
+    await updateUserSettings(targetUserId, {
+      gdrive_root_folder_id: folderId,
+      gdrive_root_folder_url: folderUrl
+    });
+
+    await sendTelegramMessage({
+      botToken,
+      chatId,
+      text: `✅ *FOLDER RUMAH GOOGLE DRIVE BERHASIL DIATUR!* 📁\n\n` +
+        `🆔 *ID Folder*: \`${folderId}\`\n\n` +
+        `Sekarang setiap Anda mengirim surat PDF, foto poster, atau teks undangan ke sini:\n` +
+        `1. Sistem mengekstrak agenda & menjadwalkan ke Google Calendar.\n` +
+        `2. Sistem membuat sub-folder baru berformat \`YYYY-MM-DD - Judul Kegiatan\` di dalam folder ini.\n` +
+        `3. Berkas (PDF / Foto / Catatan Teks .txt) otomatis diunggah ke dalam sub-folder tersebut! 🚀`,
+      inlineButtons: [{ text: '📁 Buka Folder Rumah di Google Drive', url: folderUrl }]
+    });
+    return { ok: true };
+  }
+
+  // Command: /gdrive (Cek status folder rumah)
+  if (cleanText.startsWith('/gdrive')) {
+    const rootUrl = dbUser?.gdrive_root_folder_url;
+    if (rootUrl) {
+      await sendTelegramMessage({
+        botToken,
+        chatId,
+        text: `📁 *Folder Rumah Google Drive Aktif:*\n[${rootUrl}](${rootUrl})\n\nSetiap berkas kegiatan akan otomatis diorganisir ke dalam sub-folder di sini.\n\nKetik \`/setdrive <link_baru>\` untuk mengubah folder.`,
+        inlineButtons: [{ text: '📁 Buka Folder Drive', url: rootUrl }]
+      });
+    } else {
+      await sendTelegramMessage({
+        botToken,
+        chatId,
+        text: `📁 *Folder Rumah Google Drive Belum Diatur*\n\nSistem saat ini menggunakan root Google Drive akun Anda sebagai lokasi pembuatan folder kegiatan.\n\nAnda dapat menentukan folder induk spesifik kapan saja dengan perintah:\n\`/setdrive https://drive.google.com/drive/folders/ID_FOLDER\``
+      });
+    }
+    return { ok: true };
+  }
+
   // Command: /start
   if (cleanText.startsWith('/start') || cleanText === 'start' || cleanText === 'halo' || cleanText === 'hai') {
     const isConnected = Boolean(userAuth && userAuth.email);
@@ -614,7 +684,13 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
         dbUser,
         progressMessageId: initRes.message_id,
         sourceType: 'pdf',
-        fileName: doc.file_name || 'surat_undangan.pdf'
+        fileName: doc.file_name || 'surat_undangan.pdf',
+        fileData: {
+          base64Data,
+          fileName: doc.file_name || 'surat_undangan.pdf',
+          mimeType,
+          sourceType: 'pdf'
+        }
       });
     } catch (err: any) {
       if (progressTracker) progressTracker.stop();
@@ -700,7 +776,13 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
         dbUser,
         progressMessageId: initRes.message_id,
         sourceType: 'image',
-        fileName: 'poster_kegiatan.jpg'
+        fileName: 'poster_kegiatan.jpg',
+        fileData: {
+          base64Data,
+          fileName: 'poster_kegiatan.jpg',
+          mimeType,
+          sourceType: 'image'
+        }
       });
     } catch (err: any) {
       if (progressTracker) progressTracker.stop();
@@ -782,7 +864,13 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
         dbUser,
         progressMessageId: initRes.message_id,
         sourceType: 'text',
-        fileName: 'Pesan Undangan Chat'
+        fileName: 'salinan_undangan.txt',
+        fileData: {
+          textContent: text,
+          fileName: 'salinan_undangan.txt',
+          mimeType: 'text/plain',
+          sourceType: 'text'
+        }
       });
     } catch (err: any) {
       if (progressTracker) progressTracker.stop();
@@ -912,8 +1000,16 @@ async function processAndDispatchEvent(params: {
   progressMessageId?: number;
   sourceType: 'pdf' | 'image' | 'text';
   fileName?: string;
+  fileData?: {
+    buffer?: Buffer;
+    base64Data?: string;
+    textContent?: string;
+    fileName?: string;
+    mimeType?: string;
+    sourceType: 'pdf' | 'image' | 'text';
+  };
 }) {
-  const { botToken, chatId, userId, event, hostOrigin, userAuth, dbUser, progressMessageId, sourceType, fileName } = params;
+  const { botToken, chatId, userId, event, hostOrigin, userAuth, dbUser, progressMessageId, sourceType, fileName, fileData } = params;
 
   // 1. Cross-modality Duplicate Detection Check
   try {
@@ -942,7 +1038,7 @@ async function processAndDispatchEvent(params: {
     console.error('Error during duplicate check in Telegram:', err);
   }
 
-  // 2. Dispatch to calendar if not duplicate
+  // 2. Dispatch to calendar and Google Drive if not duplicate
   await dispatchCalendarResult({
     botToken,
     chatId,
@@ -950,10 +1046,12 @@ async function processAndDispatchEvent(params: {
     event,
     hostOrigin,
     userAuth,
+    dbUser,
     calendarId: dbUser?.calendar_id || 'primary',
     progressMessageId,
     sourceType,
-    fileName
+    fileName,
+    fileData
   });
 }
 
@@ -969,12 +1067,21 @@ async function dispatchCalendarResult(params: {
   event: any;
   hostOrigin: string;
   userAuth?: any;
+  dbUser?: any;
   calendarId?: string;
   progressMessageId?: number;
   sourceType?: 'pdf' | 'image' | 'text';
   fileName?: string;
+  fileData?: {
+    buffer?: Buffer;
+    base64Data?: string;
+    textContent?: string;
+    fileName?: string;
+    mimeType?: string;
+    sourceType: 'pdf' | 'image' | 'text';
+  };
 }) {
-  const { botToken, chatId, userId, event, hostOrigin, userAuth, calendarId, progressMessageId, sourceType, fileName } = params;
+  const { botToken, chatId, userId, event, hostOrigin, userAuth, dbUser, calendarId, progressMessageId, sourceType, fileName, fileData } = params;
 
   const startDt = DateTime.fromISO(event.start_time).setZone('Asia/Jakarta');
   const endDt = DateTime.fromISO(event.end_time).setZone('Asia/Jakarta');
@@ -985,6 +1092,19 @@ async function dispatchCalendarResult(params: {
   if (userAuth && (userAuth.refreshToken || userAuth.google_refresh_token)) {
     const targetUserId = userAuth.userId || userAuth.id || userId;
     const insertResult = await insertGoogleCalendarEvent(targetUserId, event, calendarId || 'primary');
+
+    // Create Google Drive event folder and upload source file (or .txt for text input)
+    let gdriveResult: any = null;
+    try {
+      gdriveResult = await createEventFolderAndUpload({
+        userId: targetUserId,
+        event,
+        parentFolderId: dbUser?.gdrive_root_folder_id,
+        fileData
+      });
+    } catch (driveErr) {
+      console.error('Failed to create Drive folder / upload in Telegram:', driveErr);
+    }
 
     // Save event history to Neon DB
     try {
@@ -1002,6 +1122,10 @@ async function dispatchCalendarResult(params: {
         description: event.description,
         google_calendar_url: insertResult.htmlLink || event.google_calendar_url,
         synced_to_calendar: Boolean(insertResult.success),
+        gdrive_folder_id: gdriveResult?.folderId,
+        gdrive_folder_url: gdriveResult?.folderUrl,
+        gdrive_file_id: gdriveResult?.fileId,
+        gdrive_file_url: gdriveResult?.fileUrl,
         source_type: sourceType || 'telegram',
         file_name: fileName || 'Telegram Bot'
       });
@@ -1020,13 +1144,23 @@ async function dispatchCalendarResult(params: {
       if (event.meeting_id_pass) replyText += `🔑 *Kredensial*: ${event.meeting_id_pass}\n`;
       if (event.meeting_link) replyText += `🔗 *Link*: ${event.meeting_link}\n`;
       if (event.speakers) replyText += `👥 *Narasumber*: ${event.speakers}\n`;
+      if (gdriveResult?.folderUrl) {
+        replyText += `📁 *Google Drive*: [Buka Folder Kegiatan](${gdriveResult.folderUrl})\n`;
+      }
 
-      const inlineButtons = [
+      const inlineButtons: Array<{ text: string; url?: string }> = [
         {
           text: '📅 Lihat di Google Calendar',
           url: insertResult.htmlLink || event.google_calendar_url || 'https://calendar.google.com'
         }
       ];
+
+      if (gdriveResult?.folderUrl) {
+        inlineButtons.push({
+          text: '📁 Buka Folder Drive',
+          url: gdriveResult.folderUrl
+        });
+      }
 
       if (progressMessageId) {
         const edited = await editTelegramMessage({

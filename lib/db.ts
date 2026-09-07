@@ -15,6 +15,8 @@ export interface UserRecord {
   telegram_bot_token?: string;
   telegram_chat_id?: string;
   calendar_id?: string;
+  gdrive_root_folder_id?: string;
+  gdrive_root_folder_url?: string;
   ocr_engine?: string;
   ocr_service_url?: string;
   model_name?: string;
@@ -38,6 +40,10 @@ export interface ExtractedEventRecord {
   google_calendar_url?: string;
   google_event_id?: string;
   synced_to_calendar?: boolean;
+  gdrive_folder_id?: string;
+  gdrive_folder_url?: string;
+  gdrive_file_id?: string;
+  gdrive_file_url?: string;
   source_type?: string; // 'pdf' | 'image' | 'text' | 'telegram'
   file_name?: string;
   created_at: string;
@@ -104,10 +110,11 @@ export async function initDatabase(): Promise<boolean> {
       );
     `;
 
-    // Ensure phone_number column exists if table was previously created
+    // Ensure phone_number & gdrive columns exist if table was previously created
     await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number VARCHAR(50);`;
+    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS gdrive_root_folder_id TEXT;`;
+    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS gdrive_root_folder_url TEXT;`;
     await sql`CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone_number);`;
-
 
     // Create extracted_events history table
     await sql`
@@ -127,11 +134,21 @@ export async function initDatabase(): Promise<boolean> {
         google_calendar_url TEXT,
         google_event_id TEXT,
         synced_to_calendar BOOLEAN DEFAULT false,
+        gdrive_folder_id TEXT,
+        gdrive_folder_url TEXT,
+        gdrive_file_id TEXT,
+        gdrive_file_url TEXT,
         source_type VARCHAR(50) DEFAULT 'web',
         file_name TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `;
+
+    // Ensure gdrive columns exist on extracted_events
+    await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS gdrive_folder_id TEXT;`;
+    await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS gdrive_folder_url TEXT;`;
+    await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS gdrive_file_id TEXT;`;
+    await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS gdrive_file_url TEXT;`;
 
     await sql`CREATE INDEX IF NOT EXISTS idx_extracted_events_user ON extracted_events(user_id, created_at DESC);`;
 
@@ -505,6 +522,8 @@ export async function upsertGoogleUser(params: {
     telegram_bot_token: prev?.telegram_bot_token,
     telegram_chat_id: prev?.telegram_chat_id,
     calendar_id: prev?.calendar_id || 'primary',
+    gdrive_root_folder_id: prev?.gdrive_root_folder_id,
+    gdrive_root_folder_url: prev?.gdrive_root_folder_url,
     ocr_engine: prev?.ocr_engine || 'gemini',
     ocr_service_url: prev?.ocr_service_url,
     model_name: prev?.model_name || 'gemini-3.6-flash',
@@ -533,6 +552,8 @@ export async function updateUserSettings(
     ocr_engine?: string;
     ocr_service_url?: string;
     calendar_id?: string;
+    gdrive_root_folder_id?: string;
+    gdrive_root_folder_url?: string;
     telegram_bot_token?: string;
     telegram_chat_id?: string;
   }
@@ -554,6 +575,8 @@ export async function updateUserSettings(
           ocr_engine = COALESCE(${settings.ocr_engine !== undefined ? settings.ocr_engine : null}, ocr_engine),
           ocr_service_url = COALESCE(${settings.ocr_service_url !== undefined ? settings.ocr_service_url : null}, ocr_service_url),
           calendar_id = COALESCE(${settings.calendar_id !== undefined ? settings.calendar_id : null}, calendar_id),
+          gdrive_root_folder_id = COALESCE(${settings.gdrive_root_folder_id !== undefined ? settings.gdrive_root_folder_id : null}, gdrive_root_folder_id),
+          gdrive_root_folder_url = COALESCE(${settings.gdrive_root_folder_url !== undefined ? settings.gdrive_root_folder_url : null}, gdrive_root_folder_url),
           telegram_bot_token = COALESCE(${settings.telegram_bot_token !== undefined ? settings.telegram_bot_token : null}, telegram_bot_token),
           telegram_chat_id = COALESCE(${settings.telegram_chat_id !== undefined ? settings.telegram_chat_id : null}, telegram_chat_id),
           updated_at = ${now}
@@ -579,6 +602,8 @@ export async function updateUserSettings(
     if (settings.ocr_engine !== undefined) existing.ocr_engine = settings.ocr_engine;
     if (settings.ocr_service_url !== undefined) existing.ocr_service_url = settings.ocr_service_url;
     if (settings.calendar_id !== undefined) existing.calendar_id = settings.calendar_id;
+    if (settings.gdrive_root_folder_id !== undefined) existing.gdrive_root_folder_id = settings.gdrive_root_folder_id;
+    if (settings.gdrive_root_folder_url !== undefined) existing.gdrive_root_folder_url = settings.gdrive_root_folder_url;
     if (settings.telegram_bot_token !== undefined) existing.telegram_bot_token = settings.telegram_bot_token;
     if (settings.telegram_chat_id !== undefined) existing.telegram_chat_id = settings.telegram_chat_id;
     existing.updated_at = now;
@@ -674,6 +699,10 @@ export async function saveExtractedEvent(
     google_calendar_url: event.google_calendar_url || '',
     google_event_id: event.google_event_id || '',
     synced_to_calendar: Boolean(event.synced_to_calendar),
+    gdrive_folder_id: event.gdrive_folder_id || '',
+    gdrive_folder_url: event.gdrive_folder_url || '',
+    gdrive_file_id: event.gdrive_file_id || '',
+    gdrive_file_url: event.gdrive_file_url || '',
     source_type: event.source_type || 'web',
     file_name: event.file_name || '',
     created_at: now
@@ -688,14 +717,16 @@ export async function saveExtractedEvent(
           id, user_id, title, start_time, end_time,
           is_online, location, meeting_link, meeting_id_pass,
           jp, speakers, description, google_calendar_url,
-          google_event_id, synced_to_calendar, source_type,
-          file_name, created_at
+          google_event_id, synced_to_calendar, gdrive_folder_id,
+          gdrive_folder_url, gdrive_file_id, gdrive_file_url,
+          source_type, file_name, created_at
         ) VALUES (
           ${record.id}, ${record.user_id}, ${record.title}, ${record.start_time}, ${record.end_time},
           ${record.is_online}, ${record.location}, ${record.meeting_link}, ${record.meeting_id_pass},
           ${record.jp}, ${record.speakers}, ${record.description}, ${record.google_calendar_url},
-          ${record.google_event_id}, ${record.synced_to_calendar}, ${record.source_type},
-          ${record.file_name}, ${record.created_at}
+          ${record.google_event_id}, ${record.synced_to_calendar}, ${record.gdrive_folder_id},
+          ${record.gdrive_folder_url}, ${record.gdrive_file_id}, ${record.gdrive_file_url},
+          ${record.source_type}, ${record.file_name}, ${record.created_at}
         )
         RETURNING *;
       `;
