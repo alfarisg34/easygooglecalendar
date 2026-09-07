@@ -1219,7 +1219,7 @@ export default function HomePage() {
                           <span>Buka Event</span>
                         </a>
                       )}
-                      {gdriveResult?.folderUrl && (
+                      {gdriveResult?.folderUrl ? (
                         <a 
                           href={gdriveResult.folderUrl} 
                           target="_blank" 
@@ -1231,8 +1231,56 @@ export default function HomePage() {
                           <Folder size={12} />
                           <span>Folder Drive</span>
                         </a>
-                      )}
+                      ) : gdriveResult && !gdriveResult.folderUrl && gdriveResult.error ? (
+                        <a 
+                          href="/api/auth/google" 
+                          className="btn-tactile"
+                          style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem', textDecoration: 'none', background: 'rgba(255, 170, 0, 0.18)', border: '1px solid rgba(255, 170, 0, 0.4)', color: 'var(--signal-amber)' }}
+                          title={gdriveResult.error}
+                        >
+                          <Key size={12} />
+                          <span>Otorisasi Drive</span>
+                        </a>
+                      ) : null}
                     </div>
+                  </div>
+                )}
+
+                {/* Google Drive Status Alert if folder creation failed */}
+                {gdriveResult && !gdriveResult.folderUrl && gdriveResult.error && (
+                  <div style={{
+                    background: 'rgba(255, 170, 0, 0.1)',
+                    border: '1px solid rgba(255, 170, 0, 0.3)',
+                    borderRadius: 4,
+                    padding: '0.75rem 1rem',
+                    marginBottom: '1rem',
+                    fontSize: '0.8rem',
+                    color: '#FFF',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '1rem',
+                    flexWrap: 'wrap'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}>
+                      <AlertTriangle size={16} color="var(--signal-amber)" style={{ flexShrink: 0 }} />
+                      <span>{gdriveResult.error}</span>
+                    </div>
+                    <a
+                      href="/api/auth/google"
+                      className="btn-tactile"
+                      style={{
+                        padding: '0.3rem 0.75rem',
+                        fontSize: '0.75rem',
+                        textDecoration: 'none',
+                        background: 'var(--signal-amber)',
+                        color: '#000',
+                        fontWeight: 600,
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      Login Ulang Google
+                    </a>
                   </div>
                 )}
 
@@ -1644,6 +1692,39 @@ export default function HomePage() {
                   />
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginTop: 4 }}>
                     Folder induk tempat EasyCal otomatis membuat sub-folder <code>YYYY-MM-DD - Judul Kegiatan</code> dan mengunggah berkas PDF, foto flyer, atau teks undangan (.txt). Kosongkan jika ingin disimpan di root Google Drive Anda.
+                  </div>
+
+                  {/* Drive Re-Auth Notice */}
+                  <div style={{ 
+                    marginTop: '0.65rem', 
+                    padding: '0.75rem', 
+                    background: 'rgba(0, 153, 255, 0.08)', 
+                    border: '1px solid rgba(0, 153, 255, 0.25)', 
+                    borderRadius: 4, 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'space-between', 
+                    gap: '0.75rem',
+                    flexWrap: 'wrap'
+                  }}>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)', flex: 1 }}>
+                      🔑 <strong>Perhatian Izin Google Drive:</strong> Jika Anda menghubungkan akun Google sebelum fitur Google Drive ini ditambahkan, silakan klik tombol di samping untuk menyetujui izin akses Google Drive.
+                    </div>
+                    <a 
+                      href="/api/auth/google" 
+                      className="btn-tactile"
+                      style={{ 
+                        padding: '0.35rem 0.85rem', 
+                        fontSize: '0.75rem', 
+                        textDecoration: 'none', 
+                        background: 'rgba(0, 153, 255, 0.2)', 
+                        border: '1px solid rgba(0, 153, 255, 0.4)', 
+                        color: '#FFF',
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      Perbarui Izin Google Drive
+                    </a>
                   </div>
                 </div>
 

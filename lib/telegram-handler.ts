@@ -1146,6 +1146,8 @@ async function dispatchCalendarResult(params: {
       if (event.speakers) replyText += `👥 *Narasumber*: ${event.speakers}\n`;
       if (gdriveResult?.folderUrl) {
         replyText += `📁 *Google Drive*: [Buka Folder Kegiatan](${gdriveResult.folderUrl})\n`;
+      } else if (gdriveResult?.error) {
+        replyText += `\n⚠️ *Google Drive*: ${gdriveResult.error}\n`;
       }
 
       const inlineButtons: Array<{ text: string; url?: string }> = [
@@ -1159,6 +1161,11 @@ async function dispatchCalendarResult(params: {
         inlineButtons.push({
           text: '📁 Buka Folder Drive',
           url: gdriveResult.folderUrl
+        });
+      } else if (gdriveResult?.error) {
+        inlineButtons.push({
+          text: '🔑 Otorisasi Google Drive',
+          url: `${hostOrigin}/api/auth/google?user_id=tg_${userId}`
         });
       }
 

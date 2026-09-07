@@ -108,16 +108,21 @@ export async function createDriveFolder(params: {
     try {
       res = await drive.files.create({
         requestBody: fileMetadata,
-        fields: 'id, name, webViewLink'
+        fields: 'id, name, webViewLink',
+        supportsAllDrives: true
       });
     } catch (parentErr: any) {
+      if (parentErr.message?.includes('insufficient') || parentErr.message?.includes('scope')) {
+        throw parentErr;
+      }
       // If creating inside specified parent folder failed (e.g. parent folder deleted or unshared),
       // fallback to creating folder at user's root Drive!
       console.warn(`Drive create in parent ${parentId} failed: ${parentErr.message}. Retrying at root...`);
       delete fileMetadata.parents;
       res = await drive.files.create({
         requestBody: fileMetadata,
-        fields: 'id, name, webViewLink'
+        fields: 'id, name, webViewLink',
+        supportsAllDrives: true
       });
     }
 
@@ -131,9 +136,13 @@ export async function createDriveFolder(params: {
     };
   } catch (err: any) {
     console.error('Failed to create Google Drive folder:', err);
+    let errorMsg = `Gagal membuat folder Google Drive: ${err.message}`;
+    if (err.message?.includes('insufficient') || err.message?.includes('scope') || err.status === 403) {
+      errorMsg = 'Izin Google Drive belum disetujui pada akun Google Anda. Silakan lakukan Login Ulang dengan Google untuk menyetujui izin akses Google Drive.';
+    }
     return {
       success: false,
-      error: `Gagal membuat folder Google Drive: ${err.message}`
+      error: errorMsg
     };
   }
 }
@@ -166,7 +175,8 @@ export async function uploadFileToDrive(params: {
         mimeType: params.mimeType,
         body: readableStream
       },
-      fields: 'id, name, webViewLink'
+      fields: 'id, name, webViewLink',
+      supportsAllDrives: true
     });
 
     const fileId = res.data.id || undefined;
@@ -179,9 +189,13 @@ export async function uploadFileToDrive(params: {
     };
   } catch (err: any) {
     console.error('Failed to upload file to Google Drive:', err);
+    let errorMsg = `Gagal mengunggah berkas ke Google Drive: ${err.message}`;
+    if (err.message?.includes('insufficient') || err.message?.includes('scope') || err.status === 403) {
+      errorMsg = 'Izin Google Drive belum disetujui pada akun Google Anda. Silakan lakukan Login Ulang dengan Google untuk menyetujui izin akses Google Drive.';
+    }
     return {
       success: false,
-      error: `Gagal mengunggah berkas ke Google Drive: ${err.message}`
+      error: errorMsg
     };
   }
 }
