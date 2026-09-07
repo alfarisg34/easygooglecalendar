@@ -1,9 +1,10 @@
-import { TelegramUpdate } from './types';
+import { TelegramUpdate, CalendarEvent } from './types';
 import { extractEventFromSource } from './gemini';
 import { DateTime } from 'luxon';
 import { getUserGoogleAuth, deleteUserGoogleAuth } from './token-store';
 import { insertGoogleCalendarEvent } from './google-calendar-api';
-import { getUserByTelegram, getBotAdminSettings, disconnectTelegramUser, saveExtractedEvent, linkTelegramUserByPhone } from './db';
+import { getUserByTelegram, getBotAdminSettings, disconnectTelegramUser, saveExtractedEvent, linkTelegramUserByPhone, getRecentExtractedEventsForUser } from './db';
+import { findDuplicateEvent, DuplicateDetectionResult } from './duplicate-detector';
 
 const TELEGRAM_API_URL = 'https://api.telegram.org';
 
@@ -603,15 +604,17 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
         return { ok: true };
       }
 
-      await dispatchCalendarResult({ 
+      await processAndDispatchEvent({ 
         botToken, 
         chatId, 
         userId, 
         event: result.event, 
         hostOrigin,
         userAuth,
-        calendarId: dbUser?.calendar_id || 'primary',
-        progressMessageId: initRes.message_id
+        dbUser,
+        progressMessageId: initRes.message_id,
+        sourceType: 'pdf',
+        fileName: doc.file_name || 'surat_undangan.pdf'
       });
     } catch (err: any) {
       if (progressTracker) progressTracker.stop();
@@ -687,15 +690,17 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
         return { ok: true };
       }
 
-      await dispatchCalendarResult({ 
+      await processAndDispatchEvent({ 
         botToken, 
         chatId, 
         userId, 
         event: result.event, 
         hostOrigin,
         userAuth,
-        calendarId: dbUser?.calendar_id || 'primary',
-        progressMessageId: initRes.message_id
+        dbUser,
+        progressMessageId: initRes.message_id,
+        sourceType: 'image',
+        fileName: 'poster_kegiatan.jpg'
       });
     } catch (err: any) {
       if (progressTracker) progressTracker.stop();
@@ -767,15 +772,17 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
         return { ok: true };
       }
 
-      await dispatchCalendarResult({ 
+      await processAndDispatchEvent({ 
         botToken, 
         chatId, 
         userId, 
         event: result.event, 
         hostOrigin,
         userAuth,
-        calendarId: dbUser?.calendar_id || 'primary',
-        progressMessageId: initRes.message_id
+        dbUser,
+        progressMessageId: initRes.message_id,
+        sourceType: 'text',
+        fileName: 'Pesan Undangan Chat'
       });
     } catch (err: any) {
       if (progressTracker) progressTracker.stop();
@@ -821,6 +828,136 @@ Silakan kirimkan:
 }
 
 /**
+ * Sends a helpful and clear notification when a duplicate event is detected
+ */
+async function handleDuplicateNoticeTelegram(params: {
+  botToken: string;
+  chatId: number;
+  progressMessageId?: number;
+  duplicateResult: DuplicateDetectionResult;
+  hostOrigin: string;
+}) {
+  const { botToken, chatId, progressMessageId, duplicateResult, hostOrigin } = params;
+  const matched = duplicateResult.matchedEvent;
+  if (!matched) return;
+
+  const startDt = DateTime.fromISO(matched.start_time).setZone('Asia/Jakarta');
+  const endDt = DateTime.fromISO(matched.end_time).setZone('Asia/Jakarta');
+  const startFormatted = startDt.isValid ? startDt.toFormat('dd LLLL yyyy, HH:mm') : matched.start_time;
+  const endFormatted = endDt.isValid ? endDt.toFormat('HH:mm') : matched.end_time;
+
+  const createdDt = DateTime.fromISO(matched.created_at).setZone('Asia/Jakarta');
+  const createdFormatted = createdDt.isValid ? createdDt.toFormat('dd LLL yyyy, HH:mm') : matched.created_at;
+
+  const sourceTypeLabel = 
+    matched.source_type === 'pdf' ? 'Surat PDF' :
+    matched.source_type === 'image' ? 'Poster Flyer' :
+    matched.source_type === 'telegram' ? 'Bot Telegram' : 'Teks Undangan';
+
+  let replyText = `⚠️ *DATA KEGIATAN SUDAH PERNAH DIPROSES!* ⚠️\n\n` +
+    `Sistem mendeteksi bahwa berkas / teks yang Anda kirimkan merujuk pada kegiatan yang **sudah pernah diproses sebelumnya** di akun Anda.\n\n` +
+    `📋 *Detail Agenda Terdaftar:*\n` +
+    `📌 *Agenda*: ${matched.title}\n` +
+    `🕒 *Waktu*: ${startFormatted} s.d. ${endFormatted} WIB\n` +
+    `📍 *Lokasi*: ${matched.location || (matched.is_online ? 'Daring (Zoom)' : 'Sesuai Undangan')}\n`;
+
+  if (matched.meeting_id_pass) replyText += `🔑 *Kredensial*: ${matched.meeting_id_pass}\n`;
+  if (matched.jp) replyText += `📚 *Bobot*: ${matched.jp}\n`;
+
+  replyText += `\n🕒 *Riwayat Input*: ${createdFormatted} WIB (${sourceTypeLabel})\n` +
+    `💡 *Alasan Deteksi*: _${duplicateResult.reason}_\n\n` +
+    `🛡️ *Status Google Calendar*: Agenda ini sudah tercatat sebelumnya. Sistem **tidak membuat jadwal duplikat** di kalender Anda.`;
+
+  const inlineButtons: Array<{ text: string; url?: string }> = [];
+
+  if (matched.google_calendar_url) {
+    inlineButtons.push({
+      text: '📅 Lihat di Google Calendar',
+      url: matched.google_calendar_url
+    });
+  }
+
+  inlineButtons.push({
+    text: '🌐 Riwayat Web EasyCal',
+    url: hostOrigin
+  });
+
+  if (progressMessageId) {
+    const edited = await editTelegramMessage({
+      botToken,
+      chatId,
+      messageId: progressMessageId,
+      text: replyText,
+      inlineButtons
+    });
+    if (!edited) {
+      await sendTelegramMessage({ botToken, chatId, text: replyText, inlineButtons });
+    }
+  } else {
+    await sendTelegramMessage({ botToken, chatId, text: replyText, inlineButtons });
+  }
+}
+
+/**
+ * Checks for cross-modality duplicate event before dispatching to calendar
+ */
+async function processAndDispatchEvent(params: {
+  botToken: string;
+  chatId: number;
+  userId: number;
+  event: CalendarEvent;
+  hostOrigin: string;
+  userAuth?: any;
+  dbUser?: any;
+  progressMessageId?: number;
+  sourceType: 'pdf' | 'image' | 'text';
+  fileName?: string;
+}) {
+  const { botToken, chatId, userId, event, hostOrigin, userAuth, dbUser, progressMessageId, sourceType, fileName } = params;
+
+  // 1. Cross-modality Duplicate Detection Check
+  try {
+    const candidateUserIds = [
+      userId,
+      `tg_${userId}`,
+      dbUser?.id,
+      dbUser?.email,
+      userAuth?.userId,
+      userAuth?.email
+    ];
+    const recentEvents = await getRecentExtractedEventsForUser(candidateUserIds, 50);
+    const dupResult = findDuplicateEvent(event, recentEvents);
+
+    if (dupResult.isDuplicate && dupResult.matchedEvent) {
+      await handleDuplicateNoticeTelegram({
+        botToken,
+        chatId,
+        progressMessageId,
+        duplicateResult: dupResult,
+        hostOrigin
+      });
+      return;
+    }
+  } catch (err) {
+    console.error('Error during duplicate check in Telegram:', err);
+  }
+
+  // 2. Dispatch to calendar if not duplicate
+  await dispatchCalendarResult({
+    botToken,
+    chatId,
+    userId,
+    event,
+    hostOrigin,
+    userAuth,
+    calendarId: dbUser?.calendar_id || 'primary',
+    progressMessageId,
+    sourceType,
+    fileName
+  });
+}
+
+/**
  * Dispatches calendar result:
  * - If user is connected via Google OAuth -> Direct 0-Click Auto-Insert into their Google Calendar
  * - If user is NOT connected -> Sends 1-Click URL button + [Hubungkan Akun Google] button
@@ -834,8 +971,10 @@ async function dispatchCalendarResult(params: {
   userAuth?: any;
   calendarId?: string;
   progressMessageId?: number;
+  sourceType?: 'pdf' | 'image' | 'text';
+  fileName?: string;
 }) {
-  const { botToken, chatId, userId, event, hostOrigin, userAuth, calendarId, progressMessageId } = params;
+  const { botToken, chatId, userId, event, hostOrigin, userAuth, calendarId, progressMessageId, sourceType, fileName } = params;
 
   const startDt = DateTime.fromISO(event.start_time).setZone('Asia/Jakarta');
   const endDt = DateTime.fromISO(event.end_time).setZone('Asia/Jakarta');
@@ -863,8 +1002,8 @@ async function dispatchCalendarResult(params: {
         description: event.description,
         google_calendar_url: insertResult.htmlLink || event.google_calendar_url,
         synced_to_calendar: Boolean(insertResult.success),
-        source_type: 'telegram',
-        file_name: 'Telegram Bot'
+        source_type: sourceType || 'telegram',
+        file_name: fileName || 'Telegram Bot'
       });
     } catch (e) {
       console.error('Failed to save telegram event in Neon DB:', e);
@@ -928,8 +1067,8 @@ async function dispatchCalendarResult(params: {
       description: event.description,
       google_calendar_url: event.google_calendar_url,
       synced_to_calendar: false,
-      source_type: 'telegram',
-      file_name: 'Telegram Bot'
+      source_type: sourceType || 'telegram',
+      file_name: fileName || 'Telegram Bot'
     });
   } catch (e) {}
   const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;

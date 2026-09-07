@@ -832,3 +832,53 @@ export async function deleteExtractedEvent(params: {
   return true;
 }
 
+/**
+ * Retrieves the recent extracted events for a specific user using multiple possible identifiers
+ * (Telegram Chat ID, Google User ID, email, etc.) for cross-modality duplicate checking
+ */
+export async function getRecentExtractedEventsForUser(
+  userIds: (string | number | undefined | null)[],
+  limit: number = 60
+): Promise<ExtractedEventRecord[]> {
+  const cleanIds = Array.from(
+    new Set(
+      userIds
+        .filter((id): id is string | number => id !== undefined && id !== null && String(id).trim() !== '')
+        .flatMap(id => {
+          const s = String(id).trim();
+          const raw = s.replace(/^tg_/, '');
+          return [s, raw, `tg_${raw}`];
+        })
+    )
+  );
+
+  if (cleanIds.length === 0) return [];
+
+  const dbUrl = getDatabaseUrl();
+  if (dbUrl) {
+    try {
+      await initDatabase();
+      const sql = neon(dbUrl);
+      const rows = await sql`
+        SELECT * FROM extracted_events
+        WHERE user_id = ANY(${cleanIds})
+        ORDER BY created_at DESC
+        LIMIT ${limit}
+      `;
+      if (rows && rows.length > 0) {
+        return rows as ExtractedEventRecord[];
+      }
+    } catch (err) {
+      console.error('Neon DB getRecentExtractedEventsForUser error:', err);
+    }
+  }
+
+  // Local fallback
+  const local = getLocalEvents();
+  const idSet = new Set(cleanIds);
+  return local
+    .filter(e => idSet.has(e.user_id))
+    .slice(0, limit);
+}
+
+

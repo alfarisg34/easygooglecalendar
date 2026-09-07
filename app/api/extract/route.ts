@@ -4,8 +4,9 @@ import { generateICSContent } from '@/lib/calendar-builder';
 import { insertGoogleCalendarEvent } from '@/lib/google-calendar-api';
 import { getUserGoogleAuth } from '@/lib/token-store';
 import { getSessionFromRequest } from '@/lib/auth-session';
-import { getUserById, getUserByEmail, saveExtractedEvent } from '@/lib/db';
+import { getUserById, getUserByEmail, saveExtractedEvent, getRecentExtractedEventsForUser } from '@/lib/db';
 import { ExtractionRequest } from '@/lib/types';
+import { findDuplicateEvent } from '@/lib/duplicate-detector';
 
 export const maxDuration = 60; // 60 seconds serverless timeout
 
@@ -18,6 +19,7 @@ export async function POST(req: NextRequest) {
     let passedModel = '';
     let passedEngine = '';
     let customCalendarId = 'primary';
+    let forceSync = false;
 
     // Retrieve session user if present
     const session = await getSessionFromRequest(req);
@@ -39,6 +41,7 @@ export async function POST(req: NextRequest) {
       passedModel = (formData.get('model') as string) || '';
       passedEngine = (formData.get('engine') as string) || '';
       autoSync = formData.get('autoSync') === 'true';
+      forceSync = formData.get('forceSync') === 'true';
       userId = (formData.get('userId') as string) || userId;
       if (formData.get('calendarId')) {
         customCalendarId = formData.get('calendarId') as string;
@@ -82,6 +85,7 @@ export async function POST(req: NextRequest) {
       const body = await req.json();
       passedApiKey = body.apiKey || req.headers.get('x-api-key') || '';
       autoSync = Boolean(body.autoSync);
+      forceSync = Boolean(body.forceSync);
       userId = body.userId || userId;
       if (body.calendarId) customCalendarId = body.calendarId;
 
@@ -119,6 +123,33 @@ export async function POST(req: NextRequest) {
     // Attach ICS content string
     const icsContent = generateICSContent(result.event);
 
+    // Check for duplicate activity across user's previously extracted events
+    const targetUserId = session?.userId || dbUser?.id || session?.email || userId;
+    const candidateIds = [
+      targetUserId,
+      session?.userId,
+      session?.email,
+      dbUser?.id,
+      dbUser?.email,
+      dbUser?.telegram_chat_id,
+      userId
+    ];
+
+    const recentEvents = await getRecentExtractedEventsForUser(candidateIds, 60);
+    const duplicateCheck = findDuplicateEvent(result.event, recentEvents);
+
+    if (duplicateCheck.isDuplicate && duplicateCheck.matchedEvent && !forceSync) {
+      return NextResponse.json({
+        ...result,
+        icsContent,
+        isDuplicate: true,
+        duplicateReason: duplicateCheck.reason,
+        matchedEvent: duplicateCheck.matchedEvent,
+        matchedDetails: duplicateCheck.matchedDetails,
+        message: 'Data kegiatan ini sudah pernah diproses sebelumnya.'
+      });
+    }
+
     let autoSyncResult: any = null;
 
     // Check if auto-sync to Google Calendar is active for this user
@@ -139,7 +170,6 @@ export async function POST(req: NextRequest) {
 
     // Save to extracted_events history in Neon PostgreSQL
     let savedRecord = null;
-    const targetUserId = session?.userId || dbUser?.id || session?.email || userId;
     if (targetUserId) {
       try {
         savedRecord = await saveExtractedEvent({

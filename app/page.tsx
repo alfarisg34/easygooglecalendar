@@ -7,7 +7,7 @@ import {
   ExternalLink, Trash2, RefreshCw, Clock, MapPin, 
   Video, Users, BookOpen, AlertCircle, Send, CheckCircle2,
   LogOut, Shield, Database, Settings, ArrowRight, Eye, EyeOff,
-  CalendarCheck, Cpu, ChevronLeft, ChevronRight
+  CalendarCheck, Cpu, ChevronLeft, ChevronRight, AlertTriangle
 } from 'lucide-react';
 import { CalendarEvent } from '@/lib/types';
 import { DateTime } from 'luxon';
@@ -133,6 +133,12 @@ export default function HomePage() {
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [autoSyncResult, setAutoSyncResult] = useState<any>(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  const [duplicateWarning, setDuplicateWarning] = useState<{
+    isDuplicate: boolean;
+    message: string;
+    duplicateReason?: string;
+    matchedEvent?: ExtractedEventItem;
+  } | null>(null);
 
   // Settings Form State
   const [settingsForm, setSettingsForm] = useState({
@@ -317,47 +323,37 @@ export default function HomePage() {
     }
   };
 
-  const handleExtract = async () => {
-    setErrorMessage('');
-    setExtractedEvent(null);
-    setAutoSyncResult(null);
-
-    // Validate API Key
-    const effectiveKey = settingsForm.geminiApiKey;
+  const handleExtract = async (isForceSync: boolean = false) => {
+    const effectiveKey = (settingsForm.geminiApiKey || '').trim();
     if (!effectiveKey) {
-      setErrorMessage('Google Gemini API Key belum dikonfigurasi. Silakan isi di tab "Pengaturan & Kredensial".');
+      setErrorMessage('Google Gemini API Key belum diisi. Buka tab Pengaturan & Kredensial untuk memasukkan API Key Anda.');
       setActiveView('settings');
       return;
     }
 
-    if (inputTab === 'text') {
-      if (!inputText.trim()) {
-        setErrorMessage('Mohon masukkan teks atau pesan undangan yang ingin diekstrak.');
-        return;
-      }
-    } else {
-      if (!selectedFile) {
-        setErrorMessage(`Mohon pilih berkas ${inputTab === 'pdf' ? 'PDF' : 'Gambar/Poster'} terlebih dahulu.`);
-        return;
-      }
+    if (inputTab !== 'text' && !selectedFile) {
+      setErrorMessage('Silakan pilih berkas PDF atau gambar poster terlebih dahulu.');
+      return;
+    }
+
+    if (inputTab === 'text' && !inputText.trim()) {
+      setErrorMessage('Silakan masukkan teks undangan rapat atau broadcast kegiatan.');
+      return;
     }
 
     setIsLoading(true);
+    setErrorMessage('');
+    setDuplicateWarning(null);
     setExtractProgress(15);
-    setStatusMessage('Menginisialisasi pemindaian AI & membaca tata letak...');
+    setStatusMessage(isForceSync ? 'Memaksa penyimpanan ulang jadwal baru...' : 'Mengunggah dokumen & menginisialisasi Google Gemini AI...');
 
     const progressTimer = setInterval(() => {
       setExtractProgress((prev) => {
         if (prev >= 85) return prev;
-        if (prev < 40) {
-          setStatusMessage('Memindai nomor surat, waktu (WIB), dan lokasi kegiatan...');
-          return prev + 15;
-        }
-        if (prev < 70) {
-          setStatusMessage('Mengekstrak narasumber, bobot JP & link Zoom meeting...');
-          return prev + 15;
-        }
-        setStatusMessage('Menyusun struktur event & sinkronisasi Google Calendar...');
+        if (prev === 15) setStatusMessage('Menganalisis tata letak visual & membaca teks...');
+        if (prev === 45) setStatusMessage('Mengekstrak tanggal, jam, narasumber & Zoom link...');
+        if (prev === 65) setStatusMessage('Menjalankan validasi deteksi kegiatan duplikat...');
+        if (prev === 75) setStatusMessage('Menyusun struktur event & sinkronisasi Google Calendar...');
         return prev + 10;
       });
     }, 1200);
@@ -369,6 +365,7 @@ export default function HomePage() {
       formData.append('engine', settingsForm.ocrEngine);
       formData.append('calendarId', settingsForm.calendarId || 'primary');
       formData.append('autoSync', user?.hasGoogleCalendar ? 'true' : 'false');
+      if (isForceSync) formData.append('forceSync', 'true');
       if (user?.id) formData.append('userId', user.id);
 
       if (inputTab === 'text') {
@@ -389,12 +386,26 @@ export default function HomePage() {
       }
 
       setExtractProgress(100);
-      setStatusMessage('Selesai! Agenda berhasil diekstrak.');
-      setExtractedEvent(data.event);
-      if (data.autoSyncResult) {
-        setAutoSyncResult(data.autoSyncResult);
+
+      if (data.isDuplicate) {
+        setStatusMessage('Pemberitahuan: Data kegiatan ini sudah pernah diproses sebelumnya!');
+        setDuplicateWarning({
+          isDuplicate: true,
+          message: data.message || 'Data kegiatan ini sudah pernah diproses sebelumnya.',
+          duplicateReason: data.duplicateReason,
+          matchedEvent: data.matchedEvent
+        });
+        setExtractedEvent(data.event);
+        setAutoSyncResult(null);
+      } else {
+        setStatusMessage('Selesai! Agenda berhasil diekstrak.');
+        setDuplicateWarning(null);
+        setExtractedEvent(data.event);
+        if (data.autoSyncResult) {
+          setAutoSyncResult(data.autoSyncResult);
+        }
+        fetchEventsHistory(1);
       }
-      fetchEventsHistory(1);
     } catch (err: any) {
       setErrorMessage(err.message || 'Terjadi kesalahan sistem saat mengekstrak.');
     } finally {
@@ -1053,7 +1064,7 @@ export default function HomePage() {
                     {/* Extract Action Button */}
                     <div style={{ marginTop: '1.25rem' }}>
                       <button 
-                        onClick={handleExtract}
+                        onClick={() => handleExtract(false)}
                         disabled={isLoading}
                         className="btn-tactile btn-primary"
                         style={{ width: '100%', padding: '0.85rem 1rem', fontSize: '0.9rem' }}
@@ -1099,6 +1110,80 @@ export default function HomePage() {
               </div>
 
               <div className="chassis-body">
+                {/* Duplicate Event Notification Banner */}
+                {duplicateWarning && (
+                  <div style={{ 
+                    background: 'rgba(255, 170, 0, 0.12)', 
+                    border: '1px solid rgba(255, 170, 0, 0.4)', 
+                    borderRadius: 4, 
+                    padding: '1rem', 
+                    marginBottom: '1.25rem' 
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.6rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                        <AlertTriangle size={18} color="var(--signal-amber)" />
+                        <span style={{ fontWeight: 700, fontSize: '0.875rem', color: 'var(--signal-amber)' }}>
+                          DATA SUDAH PERNAH DIPROSES SEBELUMNYA
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => setDuplicateWarning(null)}
+                        style={{ background: 'transparent', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: '0.85rem' }}
+                        title="Tutup Peringatan"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <p style={{ fontSize: '0.8125rem', color: 'var(--text-main)', margin: '0 0 0.75rem 0', lineHeight: 1.5 }}>
+                      {duplicateWarning.message} Sistem mendeteksi bahwa berkas/teks ini merujuk pada agenda yang telah tercatat sebelumnya:
+                    </p>
+
+                    {duplicateWarning.matchedEvent && (
+                      <div style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: 3, padding: '0.75rem', marginBottom: '0.75rem', fontSize: '0.8rem' }}>
+                        <div style={{ fontWeight: 700, color: '#FFF', marginBottom: '0.35rem' }}>
+                          📌 {duplicateWarning.matchedEvent.title}
+                        </div>
+                        <div style={{ color: 'var(--text-dim)', display: 'flex', flexWrap: 'wrap', gap: '1rem' }}>
+                          <span>🕒 {duplicateWarning.matchedEvent.start_time ? DateTime.fromISO(duplicateWarning.matchedEvent.start_time).setZone('Asia/Jakarta').toFormat('dd LLL yyyy, HH:mm') : ''} WIB</span>
+                          {duplicateWarning.matchedEvent.location && <span>📍 {duplicateWarning.matchedEvent.location}</span>}
+                          <span>📄 Sumber: {duplicateWarning.matchedEvent.source_type || 'web'}</span>
+                        </div>
+                        {duplicateWarning.duplicateReason && (
+                          <div style={{ marginTop: '0.4rem', fontSize: '0.75rem', color: 'var(--signal-amber)', fontStyle: 'italic' }}>
+                            💡 {duplicateWarning.duplicateReason}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      {duplicateWarning.matchedEvent?.google_calendar_url && (
+                        <a
+                          href={duplicateWarning.matchedEvent.google_calendar_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn-tactile btn-success"
+                          style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem', textDecoration: 'none' }}
+                        >
+                          <ExternalLink size={12} />
+                          <span>Buka di Google Calendar</span>
+                        </a>
+                      )}
+                      <button
+                        onClick={() => handleExtract(true)}
+                        disabled={isLoading}
+                        className="btn-tactile"
+                        style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem', background: 'rgba(255, 170, 0, 0.2)', border: '1px solid rgba(255, 170, 0, 0.5)', color: '#FFF' }}
+                        title="Tetap simpan agenda ini ke Google Calendar sebagai entri baru"
+                      >
+                        <RefreshCw size={12} />
+                        <span>Tetap Simpan sebagai Jadwal Baru</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Auto Sync Notification Banner for Newly Extracted Item */}
                 {autoSyncResult?.synced && (
                   <div style={{ background: 'rgba(0, 255, 102, 0.1)', border: '1px solid rgba(0, 255, 102, 0.3)', padding: '0.85rem 1rem', borderRadius: 3, marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
