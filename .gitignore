@@ -26,6 +26,8 @@ yarn-error.log*
 .env*.local
 .env
 .user_tokens.json
+.user_events.json
+.user_docs.json
 
 # vercel
 .vercel

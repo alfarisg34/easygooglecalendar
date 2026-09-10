@@ -103,6 +103,14 @@ EasyCal menyediakan solusi terintegrasi:
 * **FR-HIST-02 (Hapus Riwayat)**: Pengguna dapat menghapus entri riwayat dari database.
 * **FR-HIST-03 (Re-Export & Re-Download)**: Pengguna dapat mengunduh ulang file `.ics` atau membuka tautan kalender/Drive dari daftar riwayat kapan saja.
 
+### 3.8 Pengarsipan Foto Dokumentasi Kegiatan (Smart Photo Ingestion)
+* **FR-DOC-01 (Foto Dokumentasi Kegiatan Fisik)**: Menerima berkas foto kegiatan fisik (.jpg, .jpeg, .png, .webp) melalui tab khusus "Foto Dokumentasi" di Web Cockpit dan Bot Telegram (caption `#foto` / `#dokumentasi`).
+* **FR-DOC-02 (Ekstraksi EXIF `DateTimeOriginal`)**: Membaca metadata waktu pengambilan foto dan informasi perangkat kamera HP langsung dari header EXIF berkas.
+* **FR-DOC-03 (Pencocokan Agenda Otomatis)**: Mencocokkan waktu foto terhadap rentang waktu agenda (`start_time - 1 jam` s.d. `end_time + 2 jam`) pada akun pengguna untuk menentukan folder Google Drive yang tepat.
+* **FR-DOC-04 (Fallback Watermark Timestamp OCR)**: Memindai stempel waktu visual dari aplikasi *GPS Map Camera* / *Timestamp Camera* menggunakan AI Vision jika metadata EXIF terhapus akibat kompresi perpesanan.
+* **FR-DOC-05 (Pengarsipan Langsung ke Google Drive)**: Mengunggah foto ke sub-folder Google Drive agenda terkait tanpa membuat agenda baru di Google Calendar, mencatat relasi di tabel `event_documentations`.
+* **FR-DOC-06 (Pencegahan Tertukar dengan Poster)**: Menggunakan verifikasi metadata kamera dan/atau klasifikasi visual AI untuk memastikan foto dokumentasi tidak diproses sebagai poster undangan acara.
+
 ---
 
 ## 4. Non-Functional Requirements (NFR)

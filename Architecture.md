@@ -32,6 +32,7 @@ flowchart TB
         subgraph RouteHandlers["Route Handlers (app/api)"]
             AuthRoute["/api/auth/*\n(Google SSO, Session, Callback)"]
             ExtractRoute["/api/extract\n(Multimodal Extractor & Sync)"]
+            DocRoute["/api/documentation\n(Photo Ingestion & Matching)"]
             EventsRoute["/api/events\n(History & Pagination)"]
             TgWebhookRoute["/api/telegram/webhook\n(Update Receiver & Dispatcher)"]
             UserRoute["/api/user/settings\n(BYOK & Custom Config)"]
@@ -41,6 +42,7 @@ flowchart TB
         subgraph CoreServices["Domain Services (lib/)"]
             GeminiEngine["gemini.ts\n(Multimodal Reasoning & Fallback)"]
             DupDetector["duplicate-detector.ts\n(Jaccard & Acronym Similarity)"]
+            PhotoMatcher["photo-matcher.ts\n(EXIF & Watermark OCR Matcher)"]
             DriveService["google-drive-api.ts\n(Auto-Folder & Upload)"]
             CalService["google-calendar-api.ts\n(Calendar Event Insertion)"]
             TgHandler["telegram-handler.ts\n(Bot Logic & Progress Bar)"]
@@ -66,6 +68,7 @@ flowchart TB
     %% Routing to Handlers
     VercelEdge -->|Auth Flow| AuthRoute
     VercelEdge -->|Upload PDF/Image/Text| ExtractRoute
+    VercelEdge -->|Upload Activity Photo| DocRoute
     VercelEdge -->|Fetch / Delete History| EventsRoute
     VercelEdge -->|Telegram Inbound Update| TgWebhookRoute
     VercelEdge -->|Manage Settings| UserRoute
@@ -79,10 +82,14 @@ flowchart TB
     ExtractRoute --> CalService
     ExtractRoute --> DriveService
     ExtractRoute --> SessionManager
+    DocRoute --> PhotoMatcher
+    DocRoute --> DriveService
+    DocRoute --> SessionManager
     EventsRoute --> SessionManager
     TgWebhookRoute --> TgHandler
     TgHandler --> GeminiEngine
     TgHandler --> DupDetector
+    TgHandler --> PhotoMatcher
     TgHandler --> CalService
     TgHandler --> DriveService
     TgHandler --> AuthManager
@@ -92,6 +99,7 @@ flowchart TB
     CalService --> GoogleCalAPI
     DriveService --> GoogleDriveAPI
     GeminiEngine --> GeminiAPI
+    PhotoMatcher --> GeminiAPI
     TgHandler --> TelegramAPI
     RouteHandlers & CoreServices -->|neon serverless SQL| NeonDB
 ```
@@ -110,6 +118,7 @@ flowchart TB
 | **Google Cloud SDK** | `googleapis` | `178.0.0` | Klien resmi untuk Google Calendar v3, Google Drive v3, dan OAuth2. |
 | **Otentikasi & Sesi** | `jose` | `6.2.10` | Enkripsi dan verifikasi JWT aman, kompatibel dengan Edge runtime. |
 | **Manipulasi Tanggal/Waktu**| `luxon` | `3.5.0` | Penanganan zona waktu IANA (`Asia/Jakarta`, UTC+7) dan kalkulasi durasi presisi. |
+| **Parser EXIF Citra** | `exifr` | `7.1.3` | Ekstraksi cepat metadata EXIF citra (DateTimeOriginal, Make, Model, GPS) murni di sisi server. |
 | **Ikonografi UI** | `lucide-react` | `0.453.0` | Ikon SVG bergaya teknis, ringan, dan tree-shakeable. |
 | **Infrastruktur Hosting** | Vercel Serverless | Platform | Deploy otomatis dari Git, auto-scaling global, sertifikat SSL instan. |
 
@@ -137,8 +146,15 @@ flowchart TB
 * **`/api/telegram/setup`**: Endpoint utilitas untuk memeriksa informasi webhook (*getWebhookInfo*), memasang URL webhook (*setWebhook*), dan menghapus webhook (*deleteWebhook*).
 * **`/api/user/settings`**: Memperbarui setelan kredensial per pengguna di database.
 * **`/api/ocr`**: Endpoint langsung untuk pemrosesan OCR teks mentah.
+* **`/api/documentation`**: Endpoint khusus penanganan foto dokumentasi kegiatan fisik. Menerima multipart/form-data foto, mengekstrak EXIF/watermark waktu, mencocokkan secara otomatis ke agenda pengguna yang relevan, mengunggah ke sub-folder Google Drive kegiatan terkait, dan mencatat relasi di basis data tanpa membuat agenda kalender baru. Mendukung query param `eventId` untuk mengambil riwayat foto kegiatan.
 
 ### 4.3 Domain & Business Logic Layer (`lib/`)
+
+#### `photo-matcher.ts` (Mesin Pencocokan Foto & Filter Guardrail)
+* **Ekstraktor EXIF Serverless (`extractPhotoMetadata`)**: Menggunakan `exifr` untuk mengekstrak `DateTimeOriginal`, `Make`, `Model`, `latitude`, `longitude`. Menerjemahkan zona waktu lokal ke format ISO 8601 UTC+7.
+* **Fallback OCR Watermark Vision (`detectWatermarkTimestamp`)**: Memanggil Gemini Vision jika metadata EXIF hilang (misal akibat kompresi WhatsApp) untuk membaca stempel tanggal, jam, dan lokasi dari aplikasi seperti *GPS Map Camera* atau *Timestamp Camera*.
+* **Guardrail Anti-Poster Flyer (`classifyImageIntent`)**: Memeriksa keberadaan EXIF hardware kamera asli. Jika tidak ada EXIF kamera, sistem menjalankan klasifikasi AI cepat guna memastikan gambar bukan poster flyer acara / surat dinas, mencegah salah penempatan berkas.
+* **Pencocok Temporal Berbobot (`matchPhotoToUserEvents`)**: Mencocokkan waktu foto terhadap rentang waktu kegiatan pengguna (`start_time - 1 jam` s.d. `end_time + 2 jam`). Memberikan confidence score tinggi jika waktu berada di tengah kegiatan, serta menandai `ambiguous = true` bila ada lebih dari satu agenda yang berdekatan untuk konfirmasi pengguna (human-in-the-loop).
 
 #### `gemini.ts` (Mesin Multimodal & Normalisasi Data)
 * **Prompt Engineering Terstruktur**: Prompt sistem berbasis panduan ketat tata kelola dokumen kedinasan Indonesia (Kop surat, nomor dinas, penentuan durasi default 2 jam jika 's.d. selesai', ekstraksi Meeting ID & Passcode Zoom, serta bobot JP).
@@ -159,6 +175,7 @@ flowchart TB
 * **Pembuatan Folder Kronologis**: Membuat folder `YYYY-MM-DD - [Judul Kegiatan]` di bawah folder induk pilihan pengguna.
 * **Streaming Upload**: Mengunggah buffer dokumen menggunakan `Readable Stream` untuk efisiensi memori runtime serverless.
 * **Konversi Transkrip Teks**: Jika sumber masukan berupa teks obrolan, sistem menghasilkan dokumen teks berformat resmi (`salinan_undangan.txt`) dan mengunggahnya ke Google Drive.
+* **Pengunggahan Foto Dokumentasi (`uploadDocumentationPhotoToDrive`)**: Memastikan sub-folder kegiatan tersedia (membuat folder baru bila agenda belum memilikinya), memberi prefix nama berkas `DOK_YYYYMMDD_HHMMSS_[nama].jpg`, dan mengunggah foto langsung ke sub-folder tersebut.
 * **Fallback Resilient**: Jika folder induk yang ditentukan tidak dapat diakses (misal telah dihapus di Drive), sistem otomatis membuat folder di Root Drive pengguna tanpa menggagalkan proses kalender.
 
 #### `google-calendar-api.ts` (Integrasi Kalender)
@@ -269,6 +286,59 @@ sequenceDiagram
     
     Handler->>Telegram: editMessageText (Hasil Agenda + Tombol Kalender & Drive)
     Telegram->>TGUser: Menampilkan Ringkasan Agenda & Tombol Akses
+```
+
+### 5.3 Smart Photo Documentation Ingestion Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Pengguna (Web / Telegram)
+    participant Channel as Web UI / Telegram Bot
+    participant Route as /api/documentation / tg-handler
+    participant PhotoMatcher as Photo Matcher Domain
+    participant Gemini as Google Gemini AI
+    participant DB as Neon PostgreSQL
+    participant Drive as Google Drive API
+
+    User->>Channel: Unggah Foto Dokumentasi Kegiatan
+    Channel->>Route: Kirim Buffer Foto & User Context
+    Route->>PhotoMatcher: extractPhotoMetadata(buffer)
+    
+    alt EXIF Ada (DateTimeOriginal & Camera Make/Model)
+        PhotoMatcher-->>Route: Waktu Pengambilan Foto (ISO 8601) + Info Kamera
+    else EXIF Kosong (Tergencet WhatsApp)
+        Route->>PhotoMatcher: detectWatermarkTimestamp(base64)
+        PhotoMatcher->>Gemini: OCR Watermark Prompt (Tanggal, Jam, Lokasi)
+        Gemini-->>PhotoMatcher: Ekstraksi Watermark GPS Map Camera
+        PhotoMatcher-->>Route: Waktu Pengambilan Alternatif
+    end
+
+    Route->>PhotoMatcher: classifyImageIntent(buffer, hasCameraExif)
+    alt Terdeteksi Poster Flyer / Bukan Foto Kegiatan
+        PhotoMatcher-->>Route: isActivityPhoto = false (Suspected Flyer)
+        Route-->>Channel: Peringatan Flyer Terdeteksi (Cegah Penjadwalan Ulang / Salah Folder)
+    else Terverifikasi Foto Dokumentasi Fisik
+        Route->>DB: Ambil Agenda Pengguna Terbaru (Window ±2 Hari)
+        DB-->>Route: Daftar Recent Events
+        Route->>PhotoMatcher: matchPhotoToUserEvents(photoTime, events)
+        PhotoMatcher-->>Route: Hasil Pencocokan (bestMatch, confidence, candidates, ambiguous)
+        
+        alt Lebih dari 1 Kandidat Agenda (Ambiguous)
+            Route-->>Channel: Tampilkan Pilihan Agenda ke Pengguna (Human-in-the-loop)
+            User->>Channel: Pilih Agenda yang Sesuai
+            Channel->>Route: Kirim eventId Terpilih
+        end
+
+        Route->>Drive: uploadDocumentationPhotoToDrive(userId, event, buffer)
+        Note over Drive: Buat sub-folder kegiatan jika belum ada,<br/>Simpan sebagai DOK_YYYYMMDD_HHMMSS_[name].jpg
+        Drive-->>Route: gdrive_file_id & gdrive_file_url
+        
+        Route->>DB: saveEventDocumentation(...)
+        DB-->>Route: Persisted
+        Route-->>Channel: Berhasil Disimpan (Folder Drive Link & Status Badge)
+        Channel-->>User: Kartu Konfirmasi Pengarsipan Foto Dokumentasi
+    end
 ```
 
 ---

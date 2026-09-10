@@ -3,9 +3,10 @@ import { extractEventFromSource } from './gemini';
 import { DateTime } from 'luxon';
 import { getUserGoogleAuth, deleteUserGoogleAuth } from './token-store';
 import { insertGoogleCalendarEvent } from './google-calendar-api';
-import { getUserByTelegram, getBotAdminSettings, disconnectTelegramUser, saveExtractedEvent, linkTelegramUserByPhone, getRecentExtractedEventsForUser, updateUserSettings } from './db';
+import { getUserByTelegram, getBotAdminSettings, disconnectTelegramUser, saveExtractedEvent, linkTelegramUserByPhone, getRecentExtractedEventsForUser, updateUserSettings, saveEventDocumentation, updateEventGdriveFolder } from './db';
 import { findDuplicateEvent, DuplicateDetectionResult } from './duplicate-detector';
-import { createEventFolderAndUpload, parseGoogleDriveFolderId } from './google-drive-api';
+import { createEventFolderAndUpload, parseGoogleDriveFolderId, uploadDocumentationPhotoToDrive } from './google-drive-api';
+import { extractPhotoMetadata, detectWatermarkTimestamp, matchPhotoToUserEvents, classifyImageIntent } from './photo-matcher';
 
 const TELEGRAM_API_URL = 'https://api.telegram.org';
 
@@ -720,23 +721,147 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
     }
 
     const bestPhoto = msg.photo[msg.photo.length - 1];
+    const caption = (msg.caption || '').toLowerCase();
+    const isExplicitDoc = caption.includes('#foto') || caption.includes('#dok') || caption.includes('#dokumentasi') || caption.includes('#kegiatan');
 
     const initRes = await sendTelegramMessage({
       botToken,
       chatId,
-      text: `⏳ *[■□□□□□□□□□] 10%* Menerima poster & menginisialisasi AI Vision...\n\n🖼️ *Berkas*: Poster / Flyer Kegiatan\n💡 *Status*: _Mengunduh gambar dari Telegram..._`
+      text: `⏳ *[■□□□□□□□□□] 10%* Menerima gambar & menginisialisasi AI Vision...\n\n🖼️ *Berkas*: Berkas Gambar\n💡 *Status*: _Mengunduh gambar dari Telegram..._`
     });
 
     const progressTracker = initRes.message_id ? startTelegramProgressBar({
       botToken,
       chatId,
       messageId: initRes.message_id,
-      fileName: 'poster_kegiatan.jpg',
+      fileName: 'gambar_kegiatan.jpg',
       fileType: 'image'
     }) : null;
 
     try {
       const { base64Data, mimeType } = await downloadTelegramFile({ botToken, fileId: bestPhoto.file_id });
+      const buffer = Buffer.from(base64Data, 'base64');
+      const photoMeta = await extractPhotoMetadata(buffer);
+
+      // Check classification: Is this an activity documentation photo or a flyer?
+      let isDocPhoto = isExplicitDoc;
+      if (!isDocPhoto) {
+        const classification = await classifyImageIntent({
+          buffer,
+          base64Data,
+          mimeType,
+          apiKey: effectiveGeminiKey,
+          hasCameraExif: photoMeta.hasCameraExif
+        });
+        isDocPhoto = classification.isActivityPhoto && classification.confidence >= 0.85;
+      }
+
+      // BRANCH A: Activity Documentation Photo (Auto-File to Google Drive)
+      if (isDocPhoto) {
+        if (progressTracker) progressTracker.stop();
+
+        const candidateUserIds = [userId, `tg_${userId}`, dbUser?.id, dbUser?.email, userAuth?.userId, userAuth?.email];
+        const recentEvents = await getRecentExtractedEventsForUser(candidateUserIds, 50);
+
+        // Detect watermark timestamp if EXIF is missing
+        let watermarkResult = null;
+        if (!photoMeta.takenAt && effectiveGeminiKey) {
+          watermarkResult = await detectWatermarkTimestamp({
+            base64Data,
+            mimeType,
+            apiKey: effectiveGeminiKey,
+            model: dbUser?.model_name
+          });
+        }
+
+        const effectiveTakenAt = photoMeta.takenAt || watermarkResult?.detectedDateTime || new Date().toISOString();
+        const matchResult = matchPhotoToUserEvents({
+          photoTimeIso: effectiveTakenAt,
+          events: recentEvents,
+          locationHint: watermarkResult?.locationText
+        });
+
+        if (!matchResult.bestMatch) {
+          const replyText = `📸 *FOTO DOKUMENTASI TERDETEKSI*\n\n` +
+            `Sistem mengenali gambar ini sebagai foto kegiatan fisik, namun **belum menemukan jadwal kegiatan aktif** di kalender Anda pada waktu foto ini.\n\n` +
+            `💡 *Solusi:*\n` +
+            `Buka website EasyCal di tab **Foto Dokumentasi** untuk memilih folder kegiatan secara manual, atau pastikan surat/agenda kegiatan sudah pernah diekstrak sebelumnya!`;
+          if (initRes.message_id) {
+            await editTelegramMessage({ botToken, chatId, messageId: initRes.message_id, text: replyText, inlineButtons: [{ text: '🌐 Buka Web EasyCal', url: hostOrigin }] });
+          } else {
+            await sendTelegramMessage({ botToken, chatId, text: replyText, inlineButtons: [{ text: '🌐 Buka Web EasyCal', url: hostOrigin }] });
+          }
+          return { ok: true };
+        }
+
+        const matchedEvent = matchResult.bestMatch;
+        const targetUserId = String(userAuth?.userId || dbUser?.id || `tg_${userId}`);
+
+        const uploadRes = await uploadDocumentationPhotoToDrive({
+          userId: targetUserId,
+          event: matchedEvent,
+          parentFolderId: dbUser?.gdrive_root_folder_id,
+          buffer,
+          originalFileName: 'foto_dokumentasi_telegram.jpg',
+          mimeType,
+          takenAtIso: effectiveTakenAt
+        });
+
+        if (!uploadRes.success) {
+          const errText = `❌ *Gagal mengunggah foto ke Google Drive:* ${uploadRes.error}`;
+          if (initRes.message_id) {
+            await editTelegramMessage({ botToken, chatId, messageId: initRes.message_id, text: errText });
+          } else {
+            await sendTelegramMessage({ botToken, chatId, text: errText });
+          }
+          return { ok: true };
+        }
+
+        // If a new folder was created for this event, persist folder ID to event record
+        if (uploadRes.folderId && !matchedEvent.gdrive_folder_id) {
+          await updateEventGdriveFolder({
+            eventId: matchedEvent.id,
+            folderId: uploadRes.folderId,
+            folderUrl: uploadRes.folderUrl || `https://drive.google.com/drive/folders/${uploadRes.folderId}`
+          });
+        }
+
+        // Save record into event_documentations table
+        await saveEventDocumentation({
+          event_id: matchedEvent.id,
+          user_id: String(targetUserId),
+          gdrive_file_id: uploadRes.fileId || '',
+          gdrive_file_url: uploadRes.fileUrl || uploadRes.folderUrl || '',
+          file_name: uploadRes.fileName || 'foto_dokumentasi_telegram.jpg',
+          file_size: buffer.length,
+          mime_type: mimeType,
+          taken_at: effectiveTakenAt,
+          match_method: photoMeta.takenAt ? 'exif_timestamp' : (watermarkResult?.detectedDateTime ? 'ocr_watermark' : 'fallback_today')
+        });
+
+        const startDt = DateTime.fromISO(matchedEvent.start_time).setZone('Asia/Jakarta');
+        const startFormatted = startDt.isValid ? startDt.toFormat('dd LLLL yyyy, HH:mm') : matchedEvent.start_time;
+
+        const successText = `📸 *FOTO DOKUMENTASI BERHASIL DIARSIPKAN!* ✅\n\n` +
+          `📌 *Kegiatan*: ${matchedEvent.title}\n` +
+          `🕒 *Waktu Acara*: ${startFormatted} WIB\n` +
+          `💡 *Pencocokan*: _${matchResult.matchReason}_\n` +
+          `📁 *Folder Google Drive*: [Buka Folder Kegiatan](${uploadRes.folderUrl || matchedEvent.gdrive_folder_url || 'https://drive.google.com'})\n\n` +
+          `✨ _Foto otomatis disimpan ke folder kegiatan tanpa membuat agenda kalender baru!_`;
+
+        const inlineButtons = [
+          { text: '📁 Buka Folder Drive', url: uploadRes.folderUrl || matchedEvent.gdrive_folder_url || 'https://drive.google.com' }
+        ];
+
+        if (initRes.message_id) {
+          await editTelegramMessage({ botToken, chatId, messageId: initRes.message_id, text: successText, inlineButtons });
+        } else {
+          await sendTelegramMessage({ botToken, chatId, text: successText, inlineButtons });
+        }
+        return { ok: true };
+      }
+
+      // BRANCH B: Poster Flyer (Standard Extraction & Calendar Sync)
       const result = await extractEventFromSource({
         apiKey: effectiveGeminiKey,
         model: dbUser?.model_name || botAdmin?.model_name || 'gemini-2.0-flash',

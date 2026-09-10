@@ -7,7 +7,8 @@ import {
   ExternalLink, Trash2, RefreshCw, Clock, MapPin, 
   Video, Users, BookOpen, AlertCircle, Send, CheckCircle2,
   LogOut, Shield, Database, Settings, ArrowRight, Eye, EyeOff,
-  CalendarCheck, Cpu, ChevronLeft, ChevronRight, AlertTriangle, Folder
+  CalendarCheck, Cpu, ChevronLeft, ChevronRight, AlertTriangle, Folder,
+  Camera
 } from 'lucide-react';
 import { CalendarEvent } from '@/lib/types';
 import { DateTime } from 'luxon';
@@ -35,6 +36,7 @@ interface ExtractedEventItem {
   gdrive_file_url?: string;
   source_type?: string; // 'pdf' | 'image' | 'text' | 'telegram'
   file_name?: string;
+  doc_count?: number;
   created_at: string;
 }
 
@@ -128,7 +130,7 @@ export default function HomePage() {
   const [activeView, setActiveView] = useState<'extract' | 'settings' | 'telegram' | 'docs'>('extract');
 
   // Extraction Workspace State
-  const [inputTab, setInputTab] = useState<'pdf' | 'image' | 'text'>('pdf');
+  const [inputTab, setInputTab] = useState<'pdf' | 'image' | 'text' | 'photo'>('pdf');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [inputText, setInputText] = useState<string>('');
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -146,6 +148,15 @@ export default function HomePage() {
     duplicateReason?: string;
     matchedEvent?: ExtractedEventItem;
   } | null>(null);
+
+  // Photo Documentation Workspace State
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  const [photoLoading, setPhotoLoading] = useState<boolean>(false);
+  const [photoResult, setPhotoResult] = useState<any | null>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string>('');
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   // Settings Form State
   const [settingsForm, setSettingsForm] = useState({
@@ -329,6 +340,49 @@ export default function HomePage() {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setSelectedFile(e.target.files[0]);
+    }
+  };
+
+  const handlePhotoFileSelect = (file: File) => {
+    setPhotoFile(file);
+    setPhotoResult(null);
+    setPhotoError(null);
+    setSelectedCandidateId('');
+    if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+    setPhotoPreviewUrl(URL.createObjectURL(file));
+  };
+
+  const handleUploadPhoto = async (overrideEventId?: string, forceUpload?: boolean) => {
+    if (!photoFile) return;
+    setPhotoLoading(true);
+    setPhotoError(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', photoFile);
+      const targetId = overrideEventId || selectedCandidateId;
+      if (targetId) formData.append('eventId', targetId);
+      if (forceUpload) formData.append('forceUpload', 'true');
+      if (settingsForm.geminiApiKey) formData.append('apiKey', settingsForm.geminiApiKey);
+
+      const res = await fetch('/api/documentation', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setPhotoResult(data);
+        fetchEventsHistory(eventsPage);
+      } else {
+        if (data.requiresSelection || data.noMatchFound || data.isFlyerSuspected) {
+          setPhotoResult(data);
+        } else {
+          setPhotoError(data.error || data.message || 'Gagal mengunggah foto dokumentasi.');
+        }
+      }
+    } catch (err: any) {
+      setPhotoError(err.message || 'Terjadi kesalahan saat mengunggah foto.');
+    } finally {
+      setPhotoLoading(false);
     }
   };
 
@@ -932,13 +986,12 @@ export default function HomePage() {
                     </div>
                   </div>
                 ) : (
-                  /* UNLOCKED STATE: Gemini API Key is ready */
                   <div>
                     {/* Media Type Switcher */}
                     <div className="tab-switcher">
                       <button 
                         type="button"
-                        onClick={() => { setInputTab('pdf'); setSelectedFile(null); }}
+                        onClick={() => { setInputTab('pdf'); setSelectedFile(null); setPhotoResult(null); setPhotoError(null); }}
                         className={`tab-btn ${inputTab === 'pdf' ? 'active' : ''}`}
                       >
                         <FileText size={14} />
@@ -946,7 +999,7 @@ export default function HomePage() {
                       </button>
                       <button 
                         type="button"
-                        onClick={() => { setInputTab('image'); setSelectedFile(null); }}
+                        onClick={() => { setInputTab('image'); setSelectedFile(null); setPhotoResult(null); setPhotoError(null); }}
                         className={`tab-btn ${inputTab === 'image' ? 'active' : ''}`}
                       >
                         <ImageIcon size={14} />
@@ -954,147 +1007,427 @@ export default function HomePage() {
                       </button>
                       <button 
                         type="button"
-                        onClick={() => setInputTab('text')}
+                        onClick={() => { setInputTab('text'); setPhotoResult(null); setPhotoError(null); }}
                         className={`tab-btn ${inputTab === 'text' ? 'active' : ''}`}
                       >
                         <MessageSquare size={14} />
                         <span>Teks / Broadcast</span>
                       </button>
+                      <button 
+                        type="button"
+                        onClick={() => { setInputTab('photo'); setSelectedFile(null); setPhotoResult(null); setPhotoError(null); }}
+                        className={`tab-btn ${inputTab === 'photo' ? 'active' : ''}`}
+                      >
+                        <Camera size={14} />
+                        <span>Foto Dokumentasi</span>
+                      </button>
                     </div>
 
-                    {/* File Dropzone for PDF / Image */}
-                    {inputTab !== 'text' ? (
+                    {/* TAB A: FOTO DOKUMENTASI WORKSPACE */}
+                    {inputTab === 'photo' ? (
                       <div>
                         <input 
                           type="file" 
-                          ref={fileInputRef} 
-                          onChange={handleFileSelect} 
-                          accept={inputTab === 'pdf' ? '.pdf,application/pdf' : '.jpg,.jpeg,.png,.webp,image/*'}
+                          ref={photoInputRef} 
+                          onChange={(e) => e.target.files?.[0] && handlePhotoFileSelect(e.target.files[0])} 
+                          accept=".jpg,.jpeg,.png,.webp,image/*"
                           style={{ display: 'none' }} 
                         />
-                        
-                        <div 
-                          className={`dropzone ${isDragging ? 'dragging' : ''}`}
-                          onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-                          onDragLeave={() => setIsDragging(false)}
-                          onDrop={handleFileDrop}
-                          onClick={() => fileInputRef.current?.click()}
-                        >
-                          {selectedFile ? (
-                            <div>
-                              <CheckCircle2 size={36} color="var(--signal-green)" style={{ margin: '0 auto 0.75rem' }} />
-                              <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', fontWeight: 600, color: '#FFF' }}>
-                                {selectedFile.name}
-                              </div>
-                              <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: 4 }}>
-                                {(selectedFile.size / 1024).toFixed(1)} KB &bull; Klik untuk mengganti berkas
-                              </div>
+
+                        {!photoFile ? (
+                          <div 
+                            className="dropzone"
+                            onClick={() => photoInputRef.current?.click()}
+                            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                            onDragLeave={() => setIsDragging(false)}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              setIsDragging(false);
+                              if (e.dataTransfer.files?.[0]) handlePhotoFileSelect(e.dataTransfer.files[0]);
+                            }}
+                          >
+                            <div className="dropzone-icon">
+                              <Camera size={36} color="var(--signal-amber)" />
                             </div>
-                          ) : (
-                            <div>
-                              <div className="dropzone-icon">
-                                {inputTab === 'pdf' ? <FileText size={36} /> : <ImageIcon size={36} />}
-                              </div>
-                              <div style={{ fontWeight: 600, color: '#FFF', marginBottom: 4 }}>
-                                Tarik berkas {inputTab === 'pdf' ? 'PDF Surat Dinas' : 'Poster Flyer'} ke sini
-                              </div>
-                              <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
-                                atau klik untuk memilih dari komputer Anda (Maksimal 10MB)
-                              </div>
+                            <div style={{ fontWeight: 600, color: '#FFF', marginBottom: 4 }}>
+                              Tarik Foto Dokumentasi Kegiatan ke sini
                             </div>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      <div>
-                        {/* Text Input Area */}
-                        <div className="form-group">
-                          <div className="form-label">
-                            <span>Pesan Chat / Broadcast Undangan</span>
-                            <div style={{ display: 'flex', gap: '0.5rem' }}>
-                              <button 
-                                type="button" 
-                                onClick={() => setInputText(SAMPLE_TEXT_LETTER)} 
-                                style={{ background: 'none', border: 'none', color: 'var(--signal-amber)', fontFamily: 'var(--font-mono)', fontSize: '0.7rem', cursor: 'pointer' }}
-                              >
-                                Contoh Surat
-                              </button>
-                              <button 
-                                type="button" 
-                                onClick={() => setInputText(SAMPLE_TEXT_POSTER)} 
-                                style={{ background: 'none', border: 'none', color: 'var(--signal-amber)', fontFamily: 'var(--font-mono)', fontSize: '0.7rem', cursor: 'pointer' }}
-                              >
-                                Contoh Poster
-                              </button>
+                            <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
+                              Mendukung foto kamera HP dengan EXIF (tanggal, jam, GPS) &bull; Format JPG/PNG/WebP
                             </div>
                           </div>
-                          <textarea 
-                            className="form-control"
-                            rows={10}
-                            value={inputText}
-                            onChange={(e) => setInputText(e.target.value)}
-                            placeholder="Tempelkan isi surat dinas, flyer kegiatan, atau broadcast pesan WhatsApp di sini..."
-                            style={{ resize: 'vertical' }}
-                          />
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Error Banner */}
-                    {errorMessage && (
-                      <div style={{ marginTop: '1rem', background: 'rgba(255, 51, 75, 0.1)', border: '1px solid rgba(255, 51, 75, 0.3)', padding: '0.85rem 1rem', borderRadius: 3, display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--signal-red)', fontSize: '0.8125rem' }}>
-                        <AlertCircle size={16} />
-                        <span>{errorMessage}</span>
-                      </div>
-                    )}
-
-                    {/* Loading Progress Bar Indicator */}
-                    {isLoading && (
-                      <div style={{ marginTop: '1.25rem', background: 'var(--bg-inset)', border: 'var(--border-chassis)', borderRadius: 4, padding: '1rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', fontSize: '0.78rem' }}>
-                          <span style={{ color: 'var(--signal-amber)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span className="spinner-chassis amber" style={{ width: 14, height: 14, borderWidth: 2 }}></span>
-                            <span>{statusMessage}</span>
-                          </span>
-                          <span style={{ fontFamily: 'var(--font-mono)', color: '#FFF', fontWeight: 700 }}>
-                            {extractProgress}%
-                          </span>
-                        </div>
-                        <div style={{ width: '100%', height: 6, background: 'rgba(255, 255, 255, 0.08)', borderRadius: 3, overflow: 'hidden' }}>
-                          <div 
-                            style={{ 
-                              width: `${extractProgress}%`, 
-                              height: '100%', 
-                              background: 'linear-gradient(90deg, var(--signal-amber), var(--signal-green))', 
-                              transition: 'width 0.4s ease',
-                              borderRadius: 3
-                            }}
-                          ></div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Extract Action Button */}
-                    <div style={{ marginTop: '1.25rem' }}>
-                      <button 
-                        onClick={() => handleExtract(false)}
-                        disabled={isLoading}
-                        className="btn-tactile btn-primary"
-                        style={{ width: '100%', padding: '0.85rem 1rem', fontSize: '0.9rem' }}
-                      >
-                        {isLoading ? (
-                          <>
-                            <span className="spinner-chassis"></span>
-                            <span>Memproses ({extractProgress}%)...</span>
-                          </>
                         ) : (
-                          <>
-                            <Sparkles size={16} />
-                            <span>Mulai Ekstraksi AI & Jadwalkan</span>
-                          </>
+                          <div>
+                            {/* Preview Card */}
+                            <div className="photo-preview-card">
+                              <div className="photo-preview-header">
+                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: '#FFF', fontWeight: 600 }}>
+                                  📷 {photoFile.name} ({(photoFile.size / 1024).toFixed(1)} KB)
+                                </span>
+                                <button 
+                                  type="button" 
+                                  onClick={() => { setPhotoFile(null); setPhotoResult(null); setPhotoError(null); }}
+                                  className="btn-tactile"
+                                  style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem' }}
+                                >
+                                  Ganti Foto
+                                </button>
+                              </div>
+
+                              {photoPreviewUrl && (
+                                <div style={{ textAlign: 'center', padding: '0.75rem', background: 'rgba(0,0,0,0.3)' }}>
+                                  <img 
+                                    src={photoPreviewUrl} 
+                                    alt="Preview" 
+                                    style={{ maxHeight: '200px', maxWidth: '100%', borderRadius: 4, objectFit: 'contain', border: '1px solid rgba(255,255,255,0.1)' }} 
+                                  />
+                                </div>
+                              )}
+
+                              {/* Photo Meta Tags */}
+                              {photoResult?.photoMetadata && (
+                                <div className="photo-meta-grid">
+                                  {photoResult.photoMetadata.takenAt && (
+                                    <span className="photo-meta-tag">
+                                      <Clock size={12} color="var(--signal-amber)" />
+                                      <span>{DateTime.fromISO(photoResult.photoMetadata.takenAt).setZone('Asia/Jakarta').toFormat('dd MMM yyyy, HH:mm')} WIB</span>
+                                    </span>
+                                  )}
+                                  {photoResult.photoMetadata.cameraMake && (
+                                    <span className="photo-meta-tag">
+                                      <Camera size={12} color="var(--signal-blue)" />
+                                      <span>{photoResult.photoMetadata.cameraMake} {photoResult.photoMetadata.cameraModel || ''}</span>
+                                    </span>
+                                  )}
+                                  {photoResult.watermark?.locationText && (
+                                    <span className="photo-meta-tag">
+                                      <MapPin size={12} color="var(--signal-green)" />
+                                      <span>{photoResult.watermark.locationText}</span>
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* State 1: Upload Success */}
+                            {photoResult?.success && (
+                              <div className="photo-match-alert">
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--signal-green)', fontWeight: 700, fontSize: '0.95rem', marginBottom: '0.5rem' }}>
+                                  <CheckCircle2 size={18} />
+                                  <span>Foto Berhasil Diarsipkan ke Google Drive!</span>
+                                </div>
+                                <div style={{ fontSize: '0.85rem', color: '#FFF', marginBottom: '0.35rem' }}>
+                                  <strong>Kegiatan:</strong> {photoResult.event?.title}
+                                </div>
+                                <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginBottom: '0.75rem' }}>
+                                  Waktu Foto: {DateTime.fromISO(photoResult.effectiveTakenAt).setZone('Asia/Jakarta').toFormat('dd MMM yyyy, HH:mm')} WIB &bull; Metode: {photoResult.matchMethod === 'exif_timestamp' ? 'Metadata EXIF Kamera' : photoResult.matchMethod === 'ocr_watermark' ? 'OCR Watermark Timestamp' : 'Pilihan Pengguna'}
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                  {(photoResult.uploadResult?.folderUrl || photoResult.event?.gdrive_folder_url) && (
+                                    <a 
+                                      href={photoResult.uploadResult?.folderUrl || photoResult.event?.gdrive_folder_url} 
+                                      target="_blank" 
+                                      rel="noopener noreferrer" 
+                                      className="btn-tactile btn-success"
+                                      style={{ padding: '0.45rem 0.85rem', fontSize: '0.8rem', textDecoration: 'none' }}
+                                    >
+                                      <Folder size={14} />
+                                      <span>Buka Folder Kegiatan di Google Drive ↗</span>
+                                    </a>
+                                  )}
+                                  <button 
+                                    type="button" 
+                                    onClick={() => { setPhotoFile(null); setPhotoResult(null); setPhotoError(null); }}
+                                    className="btn-tactile"
+                                    style={{ padding: '0.45rem 0.85rem', fontSize: '0.8rem' }}
+                                  >
+                                    <Camera size={14} />
+                                    <span>Unggah Foto Lain</span>
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* State 2: Requires Selection (Multiple Candidates) */}
+                            {photoResult?.requiresSelection && (
+                              <div style={{ marginTop: '1rem', background: 'rgba(255, 158, 11, 0.08)', border: '1px solid rgba(255, 158, 11, 0.3)', padding: '1rem', borderRadius: 4 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--signal-amber)', fontWeight: 700, fontSize: '0.875rem', marginBottom: '0.5rem' }}>
+                                  <AlertTriangle size={16} />
+                                  <span>Ditemukan Beberapa Kegiatan Pada Waktu Ini:</span>
+                                </div>
+                                <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginBottom: '0.75rem' }}>
+                                  Pilih salah satu folder kegiatan di bawah untuk menyimpan foto ini:
+                                </p>
+                                <div>
+                                  {photoResult.candidateEvents?.map((cand: any) => (
+                                    <div 
+                                      key={cand.event.id}
+                                      onClick={() => setSelectedCandidateId(cand.event.id)}
+                                      className={`candidate-event-item ${selectedCandidateId === cand.event.id ? 'selected' : ''}`}
+                                    >
+                                      <input 
+                                        type="radio" 
+                                        checked={selectedCandidateId === cand.event.id} 
+                                        onChange={() => setSelectedCandidateId(cand.event.id)}
+                                        style={{ marginTop: 3 }}
+                                      />
+                                      <div style={{ flex: 1 }}>
+                                        <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#FFF' }}>{cand.event.title}</div>
+                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: 2 }}>{cand.reason} (Skor: {Math.round(cand.score * 100)}%)</div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                                <button 
+                                  type="button" 
+                                  disabled={!selectedCandidateId || photoLoading}
+                                  onClick={() => handleUploadPhoto(selectedCandidateId)}
+                                  className="btn-tactile btn-primary"
+                                  style={{ width: '100%', marginTop: '0.5rem' }}
+                                >
+                                  {photoLoading ? 'Mengunggah ke Folder...' : 'Simpan Foto ke Kegiatan Terpilih'}
+                                </button>
+                              </div>
+                            )}
+
+                            {/* State 3: No Match Found */}
+                            {photoResult?.noMatchFound && (
+                              <div style={{ marginTop: '1rem', background: 'rgba(255, 158, 11, 0.08)', border: '1px solid rgba(255, 158, 11, 0.3)', padding: '1rem', borderRadius: 4 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--signal-amber)', fontWeight: 700, fontSize: '0.875rem', marginBottom: '0.5rem' }}>
+                                  <AlertTriangle size={16} />
+                                  <span>Tidak Ditemukan Kegiatan Otomatis</span>
+                                </div>
+                                <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginBottom: '0.75rem' }}>
+                                  {photoResult.message}
+                                </p>
+                                <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+                                  <label className="form-label">Pilih Kegiatan dari Riwayat:</label>
+                                  <select 
+                                    className="form-control"
+                                    value={selectedCandidateId}
+                                    onChange={(e) => setSelectedCandidateId(e.target.value)}
+                                  >
+                                    <option value="">-- Pilih Agenda Kegiatan --</option>
+                                    {(photoResult.availableEvents || eventsList).map((ev: any) => (
+                                      <option key={ev.id} value={ev.id}>{ev.title} ({ev.start_time.substring(0, 10)})</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <button 
+                                  type="button" 
+                                  disabled={!selectedCandidateId || photoLoading}
+                                  onClick={() => handleUploadPhoto(selectedCandidateId)}
+                                  className="btn-tactile btn-primary"
+                                  style={{ width: '100%' }}
+                                >
+                                  {photoLoading ? 'Mengunggah ke Folder...' : 'Simpan Foto ke Kegiatan Terpilih'}
+                                </button>
+                              </div>
+                            )}
+
+                            {/* State 4: Flyer Suspected Notice */}
+                            {photoResult?.isFlyerSuspected && (
+                              <div style={{ marginTop: '1rem', background: 'rgba(255, 51, 75, 0.1)', border: '1px solid rgba(255, 51, 75, 0.3)', padding: '1rem', borderRadius: 4 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--signal-red)', fontWeight: 700, fontSize: '0.875rem', marginBottom: '0.5rem' }}>
+                                  <AlertTriangle size={16} />
+                                  <span>Peringatan: Terdeteksi Poster Flyer</span>
+                                </div>
+                                <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginBottom: '0.75rem' }}>
+                                  {photoResult.message}
+                                </p>
+                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                  <button 
+                                    type="button" 
+                                    onClick={() => { setInputTab('image'); setSelectedFile(photoFile); setPhotoFile(null); setPhotoResult(null); }}
+                                    className="btn-tactile btn-primary"
+                                    style={{ fontSize: '0.8rem' }}
+                                  >
+                                    Beralih ke Tab Poster Flyer
+                                  </button>
+                                  <button 
+                                    type="button" 
+                                    onClick={() => handleUploadPhoto(undefined, true)}
+                                    className="btn-tactile"
+                                    style={{ fontSize: '0.8rem' }}
+                                  >
+                                    Tetap Unggah sebagai Dokumentasi (Force)
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Default Upload Action Button */}
+                            {!photoResult?.success && !photoResult?.requiresSelection && !photoResult?.noMatchFound && !photoResult?.isFlyerSuspected && (
+                              <div style={{ marginTop: '1rem' }}>
+                                <button 
+                                  type="button"
+                                  disabled={photoLoading}
+                                  onClick={() => handleUploadPhoto()}
+                                  className="btn-tactile btn-primary"
+                                  style={{ width: '100%', padding: '0.85rem', fontSize: '0.9rem' }}
+                                >
+                                  {photoLoading ? (
+                                    <>
+                                      <span className="spinner-chassis"></span>
+                                      <span>Memeriksa Waktu & Mengunggah ke Drive...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Camera size={16} />
+                                      <span>Periksa Waktu & Unggah ke Google Drive</span>
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Error Banner */}
+                            {photoError && (
+                              <div style={{ marginTop: '1rem', background: 'rgba(255, 51, 75, 0.1)', border: '1px solid rgba(255, 51, 75, 0.3)', padding: '0.85rem 1rem', borderRadius: 3, display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--signal-red)', fontSize: '0.8125rem' }}>
+                                <AlertCircle size={16} />
+                                <span>{photoError}</span>
+                              </div>
+                            )}
+                          </div>
                         )}
-                      </button>
-                    </div>
+                      </div>
+                    ) : (
+                      /* TAB B: PDF / POSTER / TEXT WORKSPACE */
+                      <div>
+                        {inputTab !== 'text' ? (
+                          <div>
+                            <input 
+                              type="file" 
+                              ref={fileInputRef} 
+                              onChange={handleFileSelect} 
+                              accept={inputTab === 'pdf' ? '.pdf,application/pdf' : '.jpg,.jpeg,.png,.webp,image/*'}
+                              style={{ display: 'none' }} 
+                            />
+                            
+                            <div 
+                              className={`dropzone ${isDragging ? 'dragging' : ''}`}
+                              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                              onDragLeave={() => setIsDragging(false)}
+                              onDrop={handleFileDrop}
+                              onClick={() => fileInputRef.current?.click()}
+                            >
+                              {selectedFile ? (
+                                <div>
+                                  <CheckCircle2 size={36} color="var(--signal-green)" style={{ margin: '0 auto 0.75rem' }} />
+                                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', fontWeight: 600, color: '#FFF' }}>
+                                    {selectedFile.name}
+                                  </div>
+                                  <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: 4 }}>
+                                    {(selectedFile.size / 1024).toFixed(1)} KB &bull; Klik untuk mengganti berkas
+                                  </div>
+                                </div>
+                              ) : (
+                                <div>
+                                  <div className="dropzone-icon">
+                                    {inputTab === 'pdf' ? <FileText size={36} /> : <ImageIcon size={36} />}
+                                  </div>
+                                  <div style={{ fontWeight: 600, color: '#FFF', marginBottom: 4 }}>
+                                    Tarik berkas {inputTab === 'pdf' ? 'PDF Surat Dinas' : 'Poster Flyer'} ke sini
+                                  </div>
+                                  <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
+                                    atau klik untuk memilih dari komputer Anda (Maksimal 10MB)
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div>
+                            {/* Text Input Area */}
+                            <div className="form-group">
+                              <div className="form-label">
+                                <span>Pesan Chat / Broadcast Undangan</span>
+                                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                  <button 
+                                    type="button" 
+                                    onClick={() => setInputText(SAMPLE_TEXT_LETTER)} 
+                                    style={{ background: 'none', border: 'none', color: 'var(--signal-amber)', fontFamily: 'var(--font-mono)', fontSize: '0.7rem', cursor: 'pointer' }}
+                                  >
+                                    Contoh Surat
+                                  </button>
+                                  <button 
+                                    type="button" 
+                                    onClick={() => setInputText(SAMPLE_TEXT_POSTER)} 
+                                    style={{ background: 'none', border: 'none', color: 'var(--signal-amber)', fontFamily: 'var(--font-mono)', fontSize: '0.7rem', cursor: 'pointer' }}
+                                  >
+                                    Contoh Poster
+                                  </button>
+                                </div>
+                              </div>
+                              <textarea 
+                                className="form-control"
+                                rows={10}
+                                value={inputText}
+                                onChange={(e) => setInputText(e.target.value)}
+                                placeholder="Tempelkan isi surat dinas, flyer kegiatan, atau broadcast pesan WhatsApp di sini..."
+                                style={{ resize: 'vertical' }}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Error Banner */}
+                        {errorMessage && (
+                          <div style={{ marginTop: '1rem', background: 'rgba(255, 51, 75, 0.1)', border: '1px solid rgba(255, 51, 75, 0.3)', padding: '0.85rem 1rem', borderRadius: 3, display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--signal-red)', fontSize: '0.8125rem' }}>
+                            <AlertCircle size={16} />
+                            <span>{errorMessage}</span>
+                          </div>
+                        )}
+
+                        {/* Loading Progress Bar Indicator */}
+                        {isLoading && (
+                          <div style={{ marginTop: '1.25rem', background: 'var(--bg-inset)', border: 'var(--border-chassis)', borderRadius: 4, padding: '1rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', fontSize: '0.78rem' }}>
+                              <span style={{ color: 'var(--signal-amber)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span className="spinner-chassis amber" style={{ width: 14, height: 14, borderWidth: 2 }}></span>
+                                <span>{statusMessage}</span>
+                              </span>
+                              <span style={{ fontFamily: 'var(--font-mono)', color: '#FFF', fontWeight: 700 }}>
+                                {extractProgress}%
+                              </span>
+                            </div>
+                            <div style={{ width: '100%', height: 6, background: 'rgba(255, 255, 255, 0.08)', borderRadius: 3, overflow: 'hidden' }}>
+                              <div 
+                                style={{ 
+                                  width: `${extractProgress}%`, 
+                                  height: '100%', 
+                                  background: 'linear-gradient(90deg, var(--signal-amber), var(--signal-green))', 
+                                  transition: 'width 0.4s ease',
+                                  borderRadius: 3
+                                }}
+                              ></div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Extract Action Button */}
+                        <div style={{ marginTop: '1.25rem' }}>
+                          <button 
+                            onClick={() => handleExtract(false)}
+                            disabled={isLoading}
+                            className="btn-tactile btn-primary"
+                            style={{ width: '100%', padding: '0.85rem 1rem', fontSize: '0.9rem' }}
+                          >
+                            {isLoading ? (
+                              <>
+                                <span className="spinner-chassis"></span>
+                                <span>Memproses ({extractProgress}%)...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles size={16} />
+                                <span>Mulai Ekstraksi AI & Jadwalkan</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1433,6 +1766,22 @@ export default function HomePage() {
                                 <Calendar size={12} />
                                 <span>Buka di Google Calendar</span>
                               </a>
+
+                              <button 
+                                onClick={() => {
+                                  setInputTab('photo');
+                                  setSelectedCandidateId(item.id);
+                                  setPhotoResult(null);
+                                  setPhotoError(null);
+                                  window.scrollTo({ top: 120, behavior: 'smooth' });
+                                }}
+                                className="btn-tactile"
+                                style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem', background: 'rgba(255, 158, 11, 0.1)', color: 'var(--signal-amber)', border: '1px solid rgba(255, 158, 11, 0.3)' }}
+                                title="Unggah foto dokumentasi untuk kegiatan ini"
+                              >
+                                <Camera size={12} />
+                                <span>+ Foto Dok</span>
+                              </button>
 
                               {item.gdrive_folder_url && (
                                 <a 

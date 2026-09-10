@@ -17,6 +17,7 @@ EasyCal menggunakan basis data **Neon PostgreSQL Serverless** yang terhubung mel
 ```mermaid
 erDiagram
     USERS ||--o{ EXTRACTED_EVENTS : "owns / extracts"
+    EXTRACTED_EVENTS ||--o{ EVENT_DOCUMENTATIONS : "stores documentation photos"
     
     USERS {
         VARCHAR(255) id PK "google_id / tg_id / email"
@@ -62,7 +63,21 @@ erDiagram
         TEXT gdrive_file_url "URL berkas dokumen asli di Drive"
         VARCHAR(50) source_type "pdf / image / text / telegram"
         TEXT file_name "Nama berkas sumber"
+        INTEGER doc_count "Jumlah foto dokumentasi terhubung"
         TIMESTAMPTZ created_at "Waktu pemrosesan kegiatan"
+    }
+
+    EVENT_DOCUMENTATIONS {
+        VARCHAR(255) id PK "UUID foto dokumentasi"
+        VARCHAR(255) event_id FK "Relasi ke EXTRACTED_EVENTS.id"
+        VARCHAR(255) user_id "ID pemilik berkas"
+        TEXT file_name "Nama berkas foto (DOK_...)"
+        TEXT gdrive_file_id "ID file di Google Drive"
+        TEXT gdrive_file_url "URL file Google Drive"
+        TEXT photo_timestamp "Waktu pengambilan foto ISO 8601"
+        VARCHAR(50) detection_method "Metode: exif / watermark_ocr / user_selected"
+        TEXT camera_info "Model kamera / merk perangkat"
+        TIMESTAMPTZ created_at "Waktu pengunggahan foto"
     }
 ```
 
@@ -131,6 +146,28 @@ CREATE TABLE IF NOT EXISTS extracted_events (
 
 -- Indeks Gabungan untuk Paginasi Riwayat per Pengguna
 CREATE INDEX IF NOT EXISTS idx_extracted_events_user ON extracted_events(user_id, created_at DESC);
+```
+
+### 3.3 Tabel `event_documentations`
+Tabel penyimpan metadata foto dokumentasi fisik kegiatan yang diunggah ke Google Drive:
+
+```sql
+CREATE TABLE IF NOT EXISTS event_documentations (
+  id VARCHAR(255) PRIMARY KEY,
+  event_id VARCHAR(255) NOT NULL REFERENCES extracted_events(id) ON DELETE CASCADE,
+  user_id VARCHAR(255) NOT NULL,
+  file_name TEXT NOT NULL,
+  gdrive_file_id TEXT,
+  gdrive_file_url TEXT,
+  photo_timestamp TEXT,
+  detection_method VARCHAR(50) DEFAULT 'exif',
+  camera_info TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Indeks Relasi Event dan Pengguna
+CREATE INDEX IF NOT EXISTS idx_event_docs_event ON event_documentations(event_id);
+CREATE INDEX IF NOT EXISTS idx_event_docs_user ON event_documentations(user_id, created_at DESC);
 ```
 
 ---
@@ -203,6 +240,40 @@ export interface DuplicateDetectionResult {
 }
 ```
 
+### 4.4 `EventDocumentationRecord`
+Kontrak data rekaman foto dokumentasi fisik kegiatan:
+```typescript
+export interface EventDocumentationRecord {
+  id: string;
+  event_id: string;
+  user_id: string;
+  file_name: string;
+  gdrive_file_id?: string;
+  gdrive_file_url?: string;
+  photo_timestamp?: string; // ISO 8601
+  detection_method?: 'exif' | 'watermark_ocr' | 'user_selected';
+  camera_info?: string;
+  created_at: string;
+}
+```
+
+### 4.5 `PhotoMatchResult`
+Kontrak hasil pencocokan foto ke agenda kegiatan:
+```typescript
+export interface PhotoMatchResult {
+  bestMatch: ExtractedEventRecord | null;
+  confidence: number;
+  matchReason: string;
+  candidates: Array<{
+    event: ExtractedEventRecord;
+    confidence: number;
+    timeDifferenceHours: number;
+    reason: string;
+  }>;
+  ambiguous: boolean;
+}
+```
+
 ---
 
 ## 5. Storage Fallback Mechanism (Offline / Local Dev)
@@ -224,6 +295,8 @@ Bila sistem dijalankan tanpa koneksi `DATABASE_URL`:
    ```
 2. **Penyimpanan Riwayat (`.user_events.json`)**:
    Berupa larik objek (*array of records*) `ExtractedEventRecord[]` yang disaring secara in-memory saat kueri paginasi diminta.
+3. **Penyimpanan Foto Dokumentasi (`.user_docs.json`)**:
+   Berupa larik objek `EventDocumentationRecord[]` yang disaring berdasarkan `eventId` atau `userId`.
 
 ---
 
@@ -235,3 +308,6 @@ Bila sistem dijalankan tanpa koneksi `DATABASE_URL`:
 | **Penyambungan Nomor HP (`linkTelegramUserByPhone`)** | Mencocokkan nomor telepon ternormalisasi (`62812...`) pada kolom `phone_number`. | Memanfaatkan indeks `idx_users_phone`. |
 | **Pemeriksaan Duplikasi (`getRecentExtractedEventsForUser`)** | Mengambil 50–60 entri agenda terbaru milik kandidat ID pengguna. | Memanfaatkan indeks `idx_extracted_events_user` dengan klausa `ORDER BY created_at DESC LIMIT 60`. |
 | **Paginasi Riwayat Dashboard (`getUserExtractedEvents`)** | Menghitung total entri (`COUNT(*)`) dan mengambil potongan halaman dengan `LIMIT` dan `OFFSET`. | Beroperasi pada indeks terklaster `user_id, created_at DESC`. |
+| **Pencocokan Foto Dokumentasi (`getRecentExtractedEventsForUser`)** | Mengambil agenda dalam rentang waktu foto (toleransi `start - 1 jam` s.d. `end + 2 jam`). | Evaluasi komputasi in-memory berbobot kedekatan temporal. |
+| **Riwayat Dokumentasi per Agenda (`getEventDocumentations`)** | Mengambil seluruh foto terhubung ke agenda tertentu. | Memanfaatkan indeks `idx_event_docs_event`. |
+

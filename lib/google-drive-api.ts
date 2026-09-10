@@ -327,3 +327,99 @@ ${textContent || params.event.description || ''}
     fileUrl
   };
 }
+
+/**
+ * Uploads an activity documentation photo directly into an event's Google Drive folder.
+ * Automatically creates the event folder if it doesn't exist yet!
+ */
+export async function uploadDocumentationPhotoToDrive(params: {
+  userId: string | number;
+  event: {
+    id?: string;
+    title: string;
+    start_time: string;
+    gdrive_folder_id?: string;
+    gdrive_folder_url?: string;
+  };
+  parentFolderId?: string;
+  buffer: Buffer;
+  originalFileName?: string;
+  mimeType?: string;
+  takenAtIso?: string;
+}): Promise<{
+  success: boolean;
+  folderId?: string;
+  folderUrl?: string;
+  fileId?: string;
+  fileUrl?: string;
+  fileName?: string;
+  error?: string;
+}> {
+  let targetFolderId = params.event.gdrive_folder_id;
+  let targetFolderUrl = params.event.gdrive_folder_url;
+
+  // 1. If event doesn't have a Google Drive folder yet, create it now!
+  if (!targetFolderId) {
+    const folderName = buildEventFolderName(params.event as any);
+    const folderRes = await createDriveFolder({
+      userId: params.userId,
+      folderName,
+      parentFolderId: params.parentFolderId
+    });
+
+    if (!folderRes.success || !folderRes.folderId) {
+      return {
+        success: false,
+        error: folderRes.error || 'Gagal membuat folder Google Drive untuk kegiatan ini.'
+      };
+    }
+
+    targetFolderId = folderRes.folderId;
+    targetFolderUrl = folderRes.folderUrl;
+  }
+
+  // 2. Format a clean chronological file name
+  const dt = params.takenAtIso ? DateTime.fromISO(params.takenAtIso).setZone('Asia/Jakarta') : DateTime.now().setZone('Asia/Jakarta');
+  const timeTag = dt.isValid ? dt.toFormat('yyyyMMdd_HHmmss') : DateTime.now().toFormat('yyyyMMdd_HHmmss');
+  
+  let cleanExt = '.jpg';
+  const originalLower = (params.originalFileName || '').toLowerCase();
+  if (originalLower.endsWith('.png')) cleanExt = '.png';
+  else if (originalLower.endsWith('.webp')) cleanExt = '.webp';
+  else if (originalLower.endsWith('.jpeg')) cleanExt = '.jpeg';
+
+  const baseRawName = (params.originalFileName || 'foto')
+    .replace(/\.[^/.]+$/, '')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .substring(0, 30);
+
+  const finalFileName = `DOK_${timeTag}_${baseRawName}${cleanExt}`;
+  const targetMimeType = params.mimeType || (cleanExt === '.png' ? 'image/png' : 'image/jpeg');
+
+  // 3. Upload file to Google Drive
+  const uploadRes = await uploadFileToDrive({
+    userId: params.userId,
+    folderId: targetFolderId,
+    buffer: params.buffer,
+    fileName: finalFileName,
+    mimeType: targetMimeType
+  });
+
+  if (!uploadRes.success) {
+    return {
+      success: false,
+      folderId: targetFolderId,
+      folderUrl: targetFolderUrl,
+      error: uploadRes.error || 'Gagal mengunggah foto ke Google Drive.'
+    };
+  }
+
+  return {
+    success: true,
+    folderId: targetFolderId,
+    folderUrl: targetFolderUrl,
+    fileId: uploadRes.fileId,
+    fileUrl: uploadRes.fileUrl,
+    fileName: finalFileName
+  };
+}

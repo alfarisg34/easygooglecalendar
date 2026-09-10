@@ -100,10 +100,31 @@ Proyek **EasyCal** mematuhi standar rekayasa perangkat lunak modern untuk aplika
 
 ---
 
-## 9. Checklist Verifikasi Sebelum Commit & Deploy
+## 9. Smart Photo Documentation & Anti-Flyer Ingestion Rules
+
+* **Dilarang Membuat Agenda Kalender Baru dari Foto Dokumentasi**: Foto kegiatan adalah bukti kehadiran/pelaksanaan kegiatan fisik, **BUKAN** surat undangan. Endpoint `/api/documentation` dan handler foto Telegram dilarang keras menginjeksi entri kegiatan baru ke Google Calendar; tugasnya murni mengarsipkan foto ke folder Google Drive kegiatan yang relevan.
+* **Guardrail Pemisah Poster Flyer vs Foto Fisik**:
+  * Sistem wajib mendeteksi metadata hardware kamera asli (`Make`/`Model` di EXIF).
+  * Jika metadata kamera tidak ada (misal gambar hasil ekspor aplikasi desain Canva/Photoshop), sistem wajib mengevaluasi kemungkinan poster via klasifikasi citra.
+  * Bila dicurigai poster flyer acara, sistem wajib memblokir auto-filing dokumentasi dan mengarahkan pengguna ke tab Ekstraksi Agenda agar jadwalnya dapat dicatat ke kalender.
+* **Pencocokan Temporal & Toleransi Waktu**:
+  * Pencocokan waktu foto terhadap kegiatan di kalender menggunakan rentang toleransi: `start_time - 1 jam` s.d. `end_time + 2 jam`.
+  * Jika terdapat lebih dari 1 agenda dalam rentang waktu yang sama (*ambiguous match*), sistem **wajib** melibatkan pengguna (*human-in-the-loop*) untuk memilih kegiatan yang tepat sebelum mengunggah.
+* **Penanganan Foto Kompresi Pesan Singkat (Watermark Fallback)**:
+  * Aplikasi perpesanan seperti WhatsApp secara agresif menghapus (*strip*) metadata EXIF.
+  * Jika EXIF kosong, sistem wajib menggunakan Vision OCR untuk mendeteksi cap stempel watermark tanggal, jam, atau koordinat lokasi (misalnya dari aplikasi *GPS Map Camera* atau *Timestamp Camera*).
+* **Konvensi Penamaan Berkas & Folder**:
+  * Sub-folder kegiatan di Google Drive wajib berformat: `YYYY-MM-DD - [Judul Kegiatan]`.
+  * Berkas foto dokumentasi wajib disimpan dengan prefix waktu pengambilan: `DOK_YYYYMMDD_HHMMSS_[nama_asli].jpg`.
+
+---
+
+## 10. Checklist Verifikasi Sebelum Commit & Deploy
 
 Sebelum mengajukan perubahan kode:
 1. Jalankan `npm run lint` untuk memastikan tidak ada kesalahan linter atau sintaks TypeScript.
 2. Jalankan `npm run build` untuk memverifikasi bahwa *type checking* lolos dan seluruh Route Handler dapat di-bundle tanpa error.
 3. Uji alur ekstraksi utama dengan contoh naskah surat dinas dan pastikan entitas tanggal, lokasi, serta nomor dinas terbaca akurat.
-4. Verifikasi bahwa tidak ada file kredensial rahasia yang masuk ke dalam *staging area* Git.
+4. Uji alur pengunggahan foto dokumentasi dan pastikan foto tersimpan di sub-folder Google Drive yang tepat tanpa menduplikasi agenda kalender.
+5. Verifikasi bahwa tidak ada file kredensial rahasia yang masuk ke dalam *staging area* Git.
+

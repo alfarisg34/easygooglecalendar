@@ -128,6 +128,20 @@ Komponen penahan kesalahan (*error prevention banner*) jika dokumen yang diprose
 * Menyajikan ringkasan agenda sebelumnya yang cocok: judul terdaftar, jam, serta tanggal riwayat pemrosesan.
 * Menyediakan tombol alternatif **"Tetap Simpan ke Kalender (Force Sync)"** jika pengguna mengonfirmasi bahwa acara tersebut memang sengaja dijadwalkan ulang.
 
+### 4.6 Photo Documentation Cockpit UI (`.photo-preview-card` & Candidate Picker)
+Ruang kerja khusus untuk pengunggahan dan auto-filing foto dokumentasi fisik kegiatan:
+* **Tab Switcher `[📸 Foto Dokumentasi]`**: Menampilkan badge kamera kuning yang mengalihkan zona input ke mode pemindaian foto kegiatan.
+* **Photo Preview Card (`.photo-preview-card`)**:
+  * Thumbnail citra terunggah dengan rasio aspek terjaga dan border sasis berkedalaman.
+  * Tag telemetri metadata (`.photo-meta-tag`): Indikator waktu pengambilan (`DateTimeOriginal`), merk & tipe kamera (`Make`/`Model`), status deteksi GPS, atau label *Watermark OCR*.
+* **Candidate Event Picker (`.candidate-event-item`)**:
+  * Ditampilkan secara otomatis jika terdapat lebih dari satu kegiatan dalam jendela waktu yang berdekatan.
+  * Menampilkan judul kegiatan, jam mulai, selisih waktu dari foto (misal: *+15 menit dari awal acara*), dan badge tingkat kecocokan (*Tinggi / Sedang*).
+* **Flyer Guardrail Warning (`.photo-match-alert`)**:
+  * Peringatan bersinyal merah jika citra terdeteksi sebagai poster promosi atau selebaran, dilengkapi tombol pintasan untuk memindahkan berkas ke tab **Poster (Gambar)** guna diekstrak kalendernya.
+* **Event Card Quick Action (`+ Foto Dok`)**:
+  * Tombol pintas taktil kuning pada setiap kartu agenda di kolom riwayat kanan, memungkinkan pengguna langsung mengunggah foto ke folder Google Drive kegiatan tersebut dalam 1 klik.
+
 ---
 
 ## 5. Responsive Design & Breakpoints

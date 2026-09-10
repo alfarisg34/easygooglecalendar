@@ -46,13 +46,30 @@ export interface ExtractedEventRecord {
   gdrive_file_url?: string;
   source_type?: string; // 'pdf' | 'image' | 'text' | 'telegram'
   file_name?: string;
+  doc_count?: number;
+  created_at: string;
+}
+
+export interface EventDocumentationRecord {
+  id: string;
+  event_id: string;
+  user_id: string;
+  gdrive_file_id: string;
+  gdrive_file_url: string;
+  file_name?: string;
+  file_size?: number;
+  mime_type?: string;
+  taken_at?: string;
+  match_method?: string; // 'exif_timestamp' | 'ocr_watermark' | 'manual_selection' | 'fallback_today'
   created_at: string;
 }
 
 const LOCAL_STORE_FILE = path.join(process.cwd(), '.user_tokens.json');
 const LOCAL_EVENTS_FILE = path.join(process.cwd(), '.user_events.json');
+const LOCAL_DOCS_FILE = path.join(process.cwd(), '.user_docs.json');
 const memoryUserMap = new Map<string, UserRecord>();
 const memoryEventsList: ExtractedEventRecord[] = [];
+const memoryDocsList: EventDocumentationRecord[] = [];
 
 /**
  * Normalizes phone numbers to a consistent format (e.g. 0812... / +62812... -> 62812...)
@@ -151,6 +168,25 @@ export async function initDatabase(): Promise<boolean> {
     await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS gdrive_file_url TEXT;`;
 
     await sql`CREATE INDEX IF NOT EXISTS idx_extracted_events_user ON extracted_events(user_id, created_at DESC);`;
+
+    // Create event_documentations table for photo documentation attachments
+    await sql`
+      CREATE TABLE IF NOT EXISTS event_documentations (
+        id VARCHAR(255) PRIMARY KEY,
+        event_id VARCHAR(255) NOT NULL,
+        user_id VARCHAR(255) NOT NULL,
+        gdrive_file_id TEXT NOT NULL,
+        gdrive_file_url TEXT NOT NULL,
+        file_name TEXT,
+        file_size BIGINT,
+        mime_type VARCHAR(100),
+        taken_at TIMESTAMPTZ,
+        match_method VARCHAR(50),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_event_doc_event ON event_documentations(event_id);`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_event_doc_user ON event_documentations(user_id, created_at DESC);`;
 
     dbInitialized = true;
     return true;
@@ -911,5 +947,136 @@ export async function getRecentExtractedEventsForUser(
     .filter(e => idSet.has(e.user_id))
     .slice(0, limit);
 }
+
+// Local Documentations file store helpers
+function getLocalDocs(): EventDocumentationRecord[] {
+  try {
+    if (fs.existsSync(LOCAL_DOCS_FILE)) {
+      const data = fs.readFileSync(LOCAL_DOCS_FILE, 'utf8');
+      return JSON.parse(data);
+    }
+  } catch (err) {}
+  return [];
+}
+
+function saveLocalDocs(data: EventDocumentationRecord[]) {
+  try {
+    fs.writeFileSync(LOCAL_DOCS_FILE, JSON.stringify(data, null, 2), 'utf8');
+  } catch (err) {}
+}
+
+/**
+ * Updates an event's Google Drive folder ID and URL retroactively
+ */
+export async function updateEventGdriveFolder(params: {
+  eventId: string;
+  folderId: string;
+  folderUrl: string;
+}): Promise<boolean> {
+  const dbUrl = getDatabaseUrl();
+  if (dbUrl) {
+    try {
+      await initDatabase();
+      const sql = neon(dbUrl);
+      await sql`
+        UPDATE extracted_events
+        SET gdrive_folder_id = ${params.folderId},
+            gdrive_folder_url = ${params.folderUrl}
+        WHERE id = ${params.eventId}
+      `;
+      return true;
+    } catch (err) {
+      console.error('Neon DB updateEventGdriveFolder error:', err);
+    }
+  }
+
+  const local = getLocalEvents();
+  const ev = local.find(e => e.id === params.eventId);
+  if (ev) {
+    ev.gdrive_folder_id = params.folderId;
+    ev.gdrive_folder_url = params.folderUrl;
+    saveLocalEvents(local);
+  }
+  return true;
+}
+
+/**
+ * Saves a photo documentation record linked to an event
+ */
+export async function saveEventDocumentation(
+  doc: Omit<EventDocumentationRecord, 'id' | 'created_at'> & { id?: string }
+): Promise<EventDocumentationRecord> {
+  const docId = doc.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `doc_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`);
+  const now = new Date().toISOString();
+  const dbUrl = getDatabaseUrl();
+
+  const record: EventDocumentationRecord = {
+    id: docId,
+    event_id: doc.event_id,
+    user_id: doc.user_id,
+    gdrive_file_id: doc.gdrive_file_id,
+    gdrive_file_url: doc.gdrive_file_url,
+    file_name: doc.file_name || 'foto_dokumentasi.jpg',
+    file_size: doc.file_size || 0,
+    mime_type: doc.mime_type || 'image/jpeg',
+    taken_at: doc.taken_at || now,
+    match_method: doc.match_method || 'exif_timestamp',
+    created_at: now
+  };
+
+  if (dbUrl) {
+    try {
+      await initDatabase();
+      const sql = neon(dbUrl);
+      const inserted = await sql`
+        INSERT INTO event_documentations (
+          id, event_id, user_id, gdrive_file_id, gdrive_file_url,
+          file_name, file_size, mime_type, taken_at, match_method, created_at
+        ) VALUES (
+          ${record.id}, ${record.event_id}, ${record.user_id}, ${record.gdrive_file_id}, ${record.gdrive_file_url},
+          ${record.file_name}, ${record.file_size}, ${record.mime_type}, ${record.taken_at}, ${record.match_method}, ${record.created_at}
+        )
+        RETURNING *;
+      `;
+      if (inserted && inserted.length > 0) {
+        return inserted[0] as EventDocumentationRecord;
+      }
+    } catch (err) {
+      console.error('Neon DB saveEventDocumentation error:', err);
+    }
+  }
+
+  // Fallback to local
+  const local = getLocalDocs();
+  local.unshift(record);
+  saveLocalDocs(local);
+  memoryDocsList.unshift(record);
+  return record;
+}
+
+/**
+ * Retrieves all documentation photos attached to a specific event
+ */
+export async function getEventDocumentations(eventId: string): Promise<EventDocumentationRecord[]> {
+  const dbUrl = getDatabaseUrl();
+  if (dbUrl) {
+    try {
+      await initDatabase();
+      const sql = neon(dbUrl);
+      const rows = await sql`
+        SELECT * FROM event_documentations
+        WHERE event_id = ${eventId}
+        ORDER BY created_at DESC
+      `;
+      return rows as EventDocumentationRecord[];
+    } catch (err) {
+      console.error('Neon DB getEventDocumentations error:', err);
+    }
+  }
+
+  const local = getLocalDocs();
+  return local.filter(d => d.event_id === eventId);
+}
+
 
 
