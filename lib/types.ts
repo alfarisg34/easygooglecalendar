@@ -74,6 +74,7 @@ export interface TelegramUpdate {
       last_name?: string;
       user_id?: number;
     };
+    media_group_id?: string;
     photo?: Array<{
       file_id: string;
       file_unique_id: string;

@@ -1,4 +1,10 @@
-import exifr from 'exifr';
+let exifrModule: any = null;
+try {
+  exifrModule = require('exifr');
+} catch (e) {
+  // exifr is optional; fallback to AI visual inspection
+}
+
 import { DateTime } from 'luxon';
 import { ExtractedEventRecord } from './db';
 import { normalizeModelName } from './gemini';
@@ -38,8 +44,12 @@ export interface WatermarkDetectionResult {
  * Extracts EXIF camera metadata, GPS, and creation timestamp from an image buffer
  */
 export async function extractPhotoMetadata(buffer: Buffer): Promise<PhotoMetadata> {
+  if (!exifrModule) {
+    return { hasCameraExif: false };
+  }
+
   try {
-    const raw = await exifr.parse(buffer, {
+    const raw = await exifrModule.parse(buffer, {
       pick: [
         'DateTimeOriginal',
         'CreateDate',
@@ -198,6 +208,23 @@ Jika TIDAK ADA stempel tanggal/jam yang tercetak di foto, kembalikan:
   return { detected: false };
 }
 
+export interface ClassificationResult {
+  isActivityPhoto: boolean;
+  confidence: number;
+  reason: string;
+  hasTimestampWatermark?: boolean;
+  watermarkData?: {
+    detected: boolean;
+    date?: string;
+    time?: string;
+    timezone?: string;
+    location?: string;
+    coordinates?: string;
+    appName?: string;
+    rawText?: string;
+  };
+}
+
 /**
  * Classifies an image as an activity documentation photo vs a flyer/invitation poster
  */
@@ -207,16 +234,13 @@ export async function classifyImageIntent(params: {
   mimeType?: string;
   apiKey?: string;
   hasCameraExif?: boolean;
-}): Promise<{
-  isActivityPhoto: boolean;
-  confidence: number;
-  reason: string;
-}> {
+}): Promise<ClassificationResult> {
   // If image possesses legitimate physical camera metadata (Make, Model), strong confidence it's an activity photo
   if (params.hasCameraExif) {
     return {
       isActivityPhoto: true,
       confidence: 0.95,
+      hasTimestampWatermark: false,
       reason: 'Memiliki metadata kamera fisik (EXIF Camera Hardware detected).'
     };
   }
@@ -226,25 +250,49 @@ export async function classifyImageIntent(params: {
     return {
       isActivityPhoto: true,
       confidence: 0.7,
+      hasTimestampWatermark: false,
       reason: 'Diunggah melalui stasiun foto dokumentasi.'
     };
   }
 
-  // Fast AI visual classification fallback
+  // Fast AI visual classification with watermark intelligence
   try {
     const apiKey = params.apiKey.replace(/^["']|["']$/g, '').trim();
     const model = 'gemini-2.0-flash';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
-    const promptText = `Klasifikasikan gambar ini ke dalam salah satu kategori:
-1. 'flyer_poster': Desain grafis poster pengumuman kegiatan, pamflet webinar, banner undangan dengan susunan teks besar / tipografi grafis.
-2. 'activity_photo': Foto dunia nyata yang mendokumentasikan kegiatan yang sedang berlangsung (misal: orang-orang rapat di ruangan, panggung acara, sambutan pejabat, apel pegawai, suasana pelatihan/diklat, peserta rapat).
+    const promptText = `Periksa gambar ini secara visual dan teliti untuk mengklasifikasikannya ke dalam salah satu kategori:
 
-Kembalikan HANYA JSON murni:
+KATEGORI 1: 'activity_photo' (FOTO DOKUMENTASI KEGIATAN NYATA)
+- Foto pemotretan fisik dunia nyata yang memotret kegiatan yang sedang berlangsung atau selesai: orang-orang rapat di meja/ruangan pertemuan, selfie/wefie peserta rapat, suasana apel/seminar/pelatihan/bimtek di aula, sambutan pejabat, suasana kantor, atau dokumentasi lapangan.
+- CIRI KHAS SANGAT PENTING (WATERMARK / STEMPEL KAMERA):
+  Foto dokumentasi kedinasan/kantor SANGAT SERING menggunakan aplikasi kamera ber-watermark seperti:
+  * TimeMark (logo teks TimeMark di sudut, teks tanggal & jam besar, alamat jalan lengkap, koordinat lat/long, inset kotak peta mini Google Maps)
+  * GPS Map Camera (overlay peta mini, koordinat GPS lintang/bujur, alamat lokasi, tanggal dan jam)
+  * Timestamp Camera / Open Camera / Surveyor Camera (teks stempel tanggal & jam warna putih/kuning/oranye di sudut bawah atau atas)
+- PERINGATAN KERAS: JIKA GAMBAR ADALAH FOTO DUNIA NYATA (misal: orang-orang di ruang rapat, selfie kegiatan, meja pertemuan) DENGAN STEMPEL WATERMARK SEPERTI ITU, GAMBAR INI ADALAH 100% 'activity_photo' (isActivityPhoto: true, confidence: 0.99)! Stempel waktu dan lokasi tersebut adalah BUKTI OTENTIK foto dokumentasi kegiatan fisik, BUKAN poster flyer!
+
+KATEGORI 2: 'flyer_poster' (POSTER / FLYER / PAMFLET AGENDA DIGITAL)
+- Desain grafis promosi digital murni (hasil Canva, Photoshop, Illustrator) untuk mengumumkan acara yang AKAN DATANG.
+- Ciri: Tipografi judul besar promosi, foto profil narasumber dalam bingkai grafis/lingkaran, link registrasi (bit.ly, Zoom ID/passcode, Google Form), teks "Live on Zoom / YouTube", keterangan HTM / Gratis, dan logo instansi/sponsor.
+- BUKAN foto suasana kegiatan di ruangan fisik dengan stempel timestamp kamera.
+
+Ekstrak juga informasi stempel watermark/timestamp (jika ada pada foto) ke dalam format JSON murni:
 {
   "isActivityPhoto": boolean,
   "confidence": number,
-  "reason": "Penjelasan singkat dalam bahasa Indonesia"
+  "hasTimestampWatermark": boolean,
+  "watermarkData": {
+    "detected": boolean,
+    "date": "YYYY-MM-DD",
+    "time": "HH:mm:ss",
+    "timezone": "+07:00",
+    "location": "Alamat jalan atau nama gedung jika tercetak di watermark",
+    "coordinates": "Koordinat lat/long jika tertera",
+    "appName": "TimeMark / GPS Map Camera / Timestamp Camera / lainnya",
+    "rawText": "Teks lengkap yang terbaca pada stempel watermark"
+  },
+  "reason": "Penjelasan singkat klasifikasi dalam bahasa Indonesia"
 }`;
 
     const res = await fetch(url, {
@@ -276,10 +324,15 @@ Kembalikan HANYA JSON murni:
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
       if (text) {
         const parsed = JSON.parse(text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim());
+        const isActivity = Boolean(parsed.isActivityPhoto);
+        const hasWatermark = Boolean(parsed.hasTimestampWatermark || (parsed.watermarkData && parsed.watermarkData.detected));
+        const conf = Number(parsed.confidence) || (hasWatermark ? 0.98 : (isActivity ? 0.92 : 0.8));
         return {
-          isActivityPhoto: Boolean(parsed.isActivityPhoto),
-          confidence: Number(parsed.confidence) || 0.8,
-          reason: parsed.reason || 'Klasifikasi visual AI.'
+          isActivityPhoto: isActivity || hasWatermark,
+          confidence: conf,
+          hasTimestampWatermark: hasWatermark,
+          watermarkData: (parsed.watermarkData && parsed.watermarkData.detected) ? parsed.watermarkData : undefined,
+          reason: parsed.reason || (hasWatermark ? 'Foto dokumentasi kegiatan dengan stempel watermark kamera.' : 'Klasifikasi visual AI.')
         };
       }
     }
@@ -289,8 +342,9 @@ Kembalikan HANYA JSON murni:
 
   return {
     isActivityPhoto: true,
-    confidence: 0.7,
-    reason: 'Format gambar dokumentasi kegiatan.'
+    confidence: 0.75,
+    hasTimestampWatermark: false,
+    reason: 'Format gambar dokumentasi kegiatan fisik.'
   };
 }
 

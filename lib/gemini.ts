@@ -143,6 +143,16 @@ export async function extractEventFromSource(request: ExtractionRequest): Promis
 
 Waktu Referensi Saat Ini: ${nowISO}
 
+${request.sourceType === 'image' ? `PERINGATAN PENTING KHUSUS GAMBAR:
+Jika berkas gambar ini BUKAN poster/flyer pengumuman/undangan kegiatan (misalnya berupa foto dunia nyata seperti selfie/wefie, foto suasana orang rapat di ruangan/meja pertemuan, atau foto dokumentasi berkamera dengan stempel TimeMark / GPS Map Camera / Timestamp Camera), JANGAN memaksakan membuat agenda baru dari teks stempel tanggal dan alamat jalan tersebut.
+Kembalikan HANYA JSON murni:
+{
+  "is_not_event": true,
+  "error": "Berkas ini terdeteksi sebagai foto dokumentasi fisik kegiatan, bukan poster undangan agenda."
+}
+
+Jika gambar MEMANG merupakan poster / flyer desain grafis undangan agenda kegiatan:` : ''}
+
 Panduan Ekstraksi Informasi Dokumen:
 1. 'title': Judul/nama kegiatan spesifik dan informatif (Contoh: 'Rapat Klasifikasi Sistem Aplikasi dan Pelaporan Data Ketenagakerjaan' atau 'Sharing Session 7: Mainstreaming Gender'). JANGAN hanya menulis 'Undangan' atau 'Webinar'.
 2. 'start_time': Waktu mulai acara dalam format ISO 8601 dengan timezone Indonesia (+07:00), contoh: '2026-09-03T09:00:00+07:00'. Ambil dari tanggal dan jam pelaksanaan di surat/poster atau lampiran rundown.
@@ -334,6 +344,12 @@ async function callGeminiGenerateContent(params: {
       }
 
       const parsedJson = parseGeminiJson(candidateText);
+      if (parsedJson.is_not_event) {
+        return {
+          success: false,
+          error: parsedJson.error || 'Berkas terdeteksi sebagai foto dokumentasi fisik kegiatan, bukan poster undangan agenda.'
+        };
+      }
       const event = normalizeCalendarEvent(parsedJson);
 
       return {

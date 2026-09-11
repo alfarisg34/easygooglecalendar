@@ -4,6 +4,7 @@ import { getUserById, getUserByEmail, getRecentExtractedEventsForUser, saveEvent
 import { extractPhotoMetadata, detectWatermarkTimestamp, matchPhotoToUserEvents, classifyImageIntent } from '@/lib/photo-matcher';
 import { uploadDocumentationPhotoToDrive } from '@/lib/google-drive-api';
 import { getUserGoogleAuth } from '@/lib/token-store';
+import { DateTime } from 'luxon';
 
 export const maxDuration = 60;
 
@@ -60,7 +61,19 @@ export async function POST(req: NextRequest) {
 
     // 3. Detect Watermark Timestamp if EXIF timestamp is missing (e.g. from WhatsApp compression)
     let watermarkResult = null;
-    if (!photoMeta.takenAt && effectiveApiKey) {
+    if (classification?.watermarkData?.detected && classification.watermarkData.date) {
+      const wm = classification.watermarkData;
+      const timePart = wm.time || '10:00:00';
+      const tzPart = wm.timezone || '+07:00';
+      const combined = `${wm.date}T${timePart}${tzPart}`;
+      const dt = DateTime.fromISO(combined);
+      watermarkResult = {
+        detected: true,
+        detectedDateTime: dt.isValid ? dt.toISO() || combined : combined,
+        locationText: wm.location || '',
+        rawWatermarkText: wm.rawText || ''
+      };
+    } else if (!photoMeta.takenAt && effectiveApiKey) {
       watermarkResult = await detectWatermarkTimestamp({
         base64Data,
         mimeType,

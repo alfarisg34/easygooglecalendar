@@ -722,7 +722,25 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
 
     const bestPhoto = msg.photo[msg.photo.length - 1];
     const caption = (msg.caption || '').toLowerCase();
-    const isExplicitDoc = caption.includes('#foto') || caption.includes('#dok') || caption.includes('#dokumentasi') || caption.includes('#kegiatan');
+    const isExplicitDoc = 
+      caption.includes('#foto') || 
+      caption.includes('#dok') || 
+      caption.includes('#dokumentasi') || 
+      caption.includes('#kegiatan') ||
+      caption.includes('dokumentasi') ||
+      caption.includes('foto kegiatan') ||
+      caption.includes('presensi') ||
+      caption.includes('monev') ||
+      caption.includes('laporan kegiatan');
+
+    const isExplicitPoster = 
+      caption.includes('#poster') || 
+      caption.includes('#agenda') || 
+      caption.includes('#jadwal') || 
+      caption.includes('#kalender') || 
+      caption.includes('#flyer');
+
+    const isMultiPhoto = Boolean(msg.media_group_id);
 
     const initRes = await sendTelegramMessage({
       botToken,
@@ -744,16 +762,18 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
       const photoMeta = await extractPhotoMetadata(buffer);
 
       // Check classification: Is this an activity documentation photo or a flyer?
-      let isDocPhoto = isExplicitDoc;
-      if (!isDocPhoto) {
-        const classification = await classifyImageIntent({
+      let isDocPhoto = isExplicitDoc || isMultiPhoto;
+      let classificationResult: any = null;
+
+      if (!isDocPhoto && !isExplicitPoster) {
+        classificationResult = await classifyImageIntent({
           buffer,
           base64Data,
           mimeType,
           apiKey: effectiveGeminiKey,
           hasCameraExif: photoMeta.hasCameraExif
         });
-        isDocPhoto = classification.isActivityPhoto && classification.confidence >= 0.85;
+        isDocPhoto = classificationResult.isActivityPhoto || Boolean(classificationResult.hasTimestampWatermark);
       }
 
       // BRANCH A: Activity Documentation Photo (Auto-File to Google Drive)
@@ -764,8 +784,20 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
         const recentEvents = await getRecentExtractedEventsForUser(candidateUserIds, 50);
 
         // Detect watermark timestamp if EXIF is missing
-        let watermarkResult = null;
-        if (!photoMeta.takenAt && effectiveGeminiKey) {
+        let watermarkResult: any = null;
+        if (classificationResult?.watermarkData?.detected && classificationResult.watermarkData.date) {
+          const wm = classificationResult.watermarkData;
+          const timePart = wm.time || '10:00:00';
+          const tzPart = wm.timezone || '+07:00';
+          const combined = `${wm.date}T${timePart}${tzPart}`;
+          const dt = DateTime.fromISO(combined);
+          watermarkResult = {
+            detected: true,
+            detectedDateTime: dt.isValid ? dt.toISO() || combined : combined,
+            locationText: wm.location || '',
+            rawWatermarkText: wm.rawText || ''
+          };
+        } else if (!photoMeta.takenAt && effectiveGeminiKey) {
           watermarkResult = await detectWatermarkTimestamp({
             base64Data,
             mimeType,
@@ -781,25 +813,25 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
           locationHint: watermarkResult?.locationText
         });
 
-        if (!matchResult.bestMatch) {
-          const replyText = `📸 *FOTO DOKUMENTASI TERDETEKSI*\n\n` +
-            `Sistem mengenali gambar ini sebagai foto kegiatan fisik, namun **belum menemukan jadwal kegiatan aktif** di kalender Anda pada waktu foto ini.\n\n` +
-            `💡 *Solusi:*\n` +
-            `Buka website EasyCal di tab **Foto Dokumentasi** untuk memilih folder kegiatan secara manual, atau pastikan surat/agenda kegiatan sudah pernah diekstrak sebelumnya!`;
-          if (initRes.message_id) {
-            await editTelegramMessage({ botToken, chatId, messageId: initRes.message_id, text: replyText, inlineButtons: [{ text: '🌐 Buka Web EasyCal', url: hostOrigin }] });
-          } else {
-            await sendTelegramMessage({ botToken, chatId, text: replyText, inlineButtons: [{ text: '🌐 Buka Web EasyCal', url: hostOrigin }] });
-          }
-          return { ok: true };
-        }
-
-        const matchedEvent = matchResult.bestMatch;
         const targetUserId = String(userAuth?.userId || dbUser?.id || `tg_${userId}`);
+        let matchedEvent = matchResult.bestMatch;
+        let isAutoCreatedFolder = false;
+
+        if (!matchedEvent) {
+          // If no calendar event matched, auto-create a documentation folder for this activity in Google Drive
+          isAutoCreatedFolder = true;
+          const locName = watermarkResult?.locationText ? watermarkResult.locationText.substring(0, 50) : 'Dokumentasi Lapangan';
+          matchedEvent = {
+            id: `doc_${Date.now()}`,
+            title: `Dokumentasi: ${locName}`,
+            start_time: effectiveTakenAt,
+            user_id: targetUserId
+          } as any;
+        }
 
         const uploadRes = await uploadDocumentationPhotoToDrive({
           userId: targetUserId,
-          event: matchedEvent,
+          event: matchedEvent!,
           parentFolderId: dbUser?.gdrive_root_folder_id,
           buffer,
           originalFileName: 'foto_dokumentasi_telegram.jpg',
@@ -817,10 +849,10 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
           return { ok: true };
         }
 
-        // If a new folder was created for this event, persist folder ID to event record
-        if (uploadRes.folderId && !matchedEvent.gdrive_folder_id) {
+        // If a new folder was created for this event, persist folder ID to event record if event exists in DB
+        if (uploadRes.folderId && matchedEvent!.id && !matchedEvent!.id.startsWith('doc_') && !matchedEvent!.gdrive_folder_id) {
           await updateEventGdriveFolder({
-            eventId: matchedEvent.id,
+            eventId: matchedEvent!.id,
             folderId: uploadRes.folderId,
             folderUrl: uploadRes.folderUrl || `https://drive.google.com/drive/folders/${uploadRes.folderId}`
           });
@@ -828,7 +860,7 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
 
         // Save record into event_documentations table
         await saveEventDocumentation({
-          event_id: matchedEvent.id,
+          event_id: matchedEvent!.id || '',
           user_id: String(targetUserId),
           gdrive_file_id: uploadRes.fileId || '',
           gdrive_file_url: uploadRes.fileUrl || uploadRes.folderUrl || '',
@@ -839,18 +871,29 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
           match_method: photoMeta.takenAt ? 'exif_timestamp' : (watermarkResult?.detectedDateTime ? 'ocr_watermark' : 'fallback_today')
         });
 
-        const startDt = DateTime.fromISO(matchedEvent.start_time).setZone('Asia/Jakarta');
-        const startFormatted = startDt.isValid ? startDt.toFormat('dd LLLL yyyy, HH:mm') : matchedEvent.start_time;
+        const startDt = DateTime.fromISO(matchedEvent!.start_time).setZone('Asia/Jakarta');
+        const startFormatted = startDt.isValid ? startDt.toFormat('dd LLLL yyyy, HH:mm') : matchedEvent!.start_time;
 
-        const successText = `📸 *FOTO DOKUMENTASI BERHASIL DIARSIPKAN!* ✅\n\n` +
-          `📌 *Kegiatan*: ${matchedEvent.title}\n` +
-          `🕒 *Waktu Acara*: ${startFormatted} WIB\n` +
-          `💡 *Pencocokan*: _${matchResult.matchReason}_\n` +
-          `📁 *Folder Google Drive*: [Buka Folder Kegiatan](${uploadRes.folderUrl || matchedEvent.gdrive_folder_url || 'https://drive.google.com'})\n\n` +
-          `✨ _Foto otomatis disimpan ke folder kegiatan tanpa membuat agenda kalender baru!_`;
+        let successText = '';
+        if (isAutoCreatedFolder) {
+          successText = `📸 *FOTO DOKUMENTASI BERHASIL DIARSIPKAN!* ✅\n\n` +
+            `📍 *Lokasi*: ${watermarkResult?.locationText || 'Dokumentasi Lapangan'}\n` +
+            `🕒 *Waktu Foto*: ${startFormatted} WIB\n` +
+            `💡 *Keterangan*: _Foto terdeteksi sebagai dokumentasi kegiatan fisik. Berkas otomatis diarsipkan ke folder Google Drive tanpa membuat agenda kalender baru!_\n` +
+            `📁 *Folder Google Drive*: [Buka Folder Dokumentasi](${uploadRes.folderUrl || 'https://drive.google.com'})\n\n` +
+            `✨ _Foto tersimpan rapi dan aman di Google Drive!_`;
+        } else {
+          successText = `📸 *FOTO DOKUMENTASI BERHASIL DIARSIPKAN!* ✅\n\n` +
+            `📌 *Kegiatan*: ${matchedEvent!.title}\n` +
+            `🕒 *Waktu Acara*: ${startFormatted} WIB\n` +
+            `💡 *Pencocokan*: _${matchResult.matchReason}_\n` +
+            `📁 *Folder Google Drive*: [Buka Folder Kegiatan](${uploadRes.folderUrl || matchedEvent!.gdrive_folder_url || 'https://drive.google.com'})\n\n` +
+            `✨ _Foto otomatis disimpan ke folder kegiatan tanpa membuat agenda kalender baru!_`;
+        }
 
         const inlineButtons = [
-          { text: '📁 Buka Folder Drive', url: uploadRes.folderUrl || matchedEvent.gdrive_folder_url || 'https://drive.google.com' }
+          { text: '📁 Buka Folder Drive', url: uploadRes.folderUrl || matchedEvent!.gdrive_folder_url || 'https://drive.google.com' },
+          { text: '🌐 Buka Web EasyCal', url: hostOrigin }
         ];
 
         if (initRes.message_id) {
@@ -874,6 +917,20 @@ Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks P
 
       if (!result.success || !result.event) {
         const errMsg = result.error || 'Poster tidak dapat dibaca oleh AI.';
+        
+        // If the AI flagged this image as a documentation photo instead of a poster
+        if (errMsg.includes('foto dokumentasi') || errMsg.includes('bukan poster')) {
+          const docNoticeText = `📸 *FOTO DOKUMENTASI TERDETEKSI*\n\n` +
+            `AI mendeteksi gambar ini sebagai **foto dokumentasi kegiatan fisik**, bukan poster undangan kegiatan.\n\n` +
+            `💡 *Info*: Sistem tidak membuat agenda kalender baru untuk foto dokumentasi. Anda dapat mengunggahnya ke Google Drive melalui menu **Foto Dokumentasi** di website atau sertakan caption \`#foto\` saat mengirim ke bot!`;
+          if (initRes.message_id) {
+            await editTelegramMessage({ botToken, chatId, messageId: initRes.message_id, text: docNoticeText, inlineButtons: [{ text: '🌐 Buka Web EasyCal', url: hostOrigin }] });
+          } else {
+            await sendTelegramMessage({ botToken, chatId, text: docNoticeText, inlineButtons: [{ text: '🌐 Buka Web EasyCal', url: hostOrigin }] });
+          }
+          return { ok: true };
+        }
+
         if (initRes.message_id) {
           await editTelegramMessage({
             botToken,
