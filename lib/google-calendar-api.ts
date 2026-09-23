@@ -2,6 +2,7 @@ import { google } from 'googleapis';
 import { CalendarEvent } from './types';
 import { getGoogleOAuth2Client } from './google-auth';
 import { getUserGoogleAuth, saveUserGoogleAuth } from './token-store';
+import { updateUserGoogleTokens } from './db';
 
 /**
  * Inserts an event directly into a user's Google Calendar using their stored refresh_token
@@ -32,7 +33,7 @@ export async function insertGoogleCalendarEvent(
       expiry_date: userAuth.expiryDate
     });
 
-    // Listen to token refresh events and update token-store automatically
+    // Listen to token refresh events and update token-store and Neon DB automatically
     oauth2Client.on('tokens', async (newTokens) => {
       if (newTokens.access_token) {
         userAuth.accessToken = newTokens.access_token;
@@ -40,6 +41,12 @@ export async function insertGoogleCalendarEvent(
         if (newTokens.expiry_date) userAuth.expiryDate = newTokens.expiry_date;
         userAuth.updatedAt = new Date().toISOString();
         await saveUserGoogleAuth(userAuth);
+        await updateUserGoogleTokens({
+          userId: userAuth.userId || userId,
+          accessToken: newTokens.access_token,
+          refreshToken: newTokens.refresh_token || undefined,
+          expiryDate: newTokens.expiry_date || undefined
+        });
       }
     });
 

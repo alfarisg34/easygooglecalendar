@@ -3,6 +3,7 @@ import { Readable } from 'stream';
 import { CalendarEvent } from './types';
 import { getGoogleOAuth2Client } from './google-auth';
 import { getUserGoogleAuth, saveUserGoogleAuth } from './token-store';
+import { updateUserGoogleTokens } from './db';
 import { DateTime } from 'luxon';
 
 /**
@@ -72,6 +73,12 @@ async function getDriveClient(userId: string | number) {
       if (newTokens.expiry_date) userAuth.expiryDate = newTokens.expiry_date;
       userAuth.updatedAt = new Date().toISOString();
       await saveUserGoogleAuth(userAuth);
+      await updateUserGoogleTokens({
+        userId: userAuth.userId || userId,
+        accessToken: newTokens.access_token,
+        refreshToken: newTokens.refresh_token || undefined,
+        expiryDate: newTokens.expiry_date || undefined
+      });
     }
   });
 

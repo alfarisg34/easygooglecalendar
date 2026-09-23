@@ -42,9 +42,13 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'Parameter id diperlukan' }, { status: 400 });
   }
 
+  let user = await getUserById(session.userId);
+  if (!user && session.email) user = await getUserByEmail(session.email);
+
   const success = await deleteExtractedEvent({
     userId: session.userId,
     email: session.email,
+    telegramChatId: user?.telegram_chat_id,
     eventId
   });
 

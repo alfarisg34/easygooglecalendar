@@ -602,19 +602,35 @@ export async function updateUserSettings(
       await initDatabase();
       const sql = neon(dbUrl);
 
-      // Build dynamic update safely
+      const cleanPhone = settings.phone_number !== undefined && settings.phone_number !== null && String(settings.phone_number).trim() !== ''
+        ? String(settings.phone_number).trim()
+        : null;
+      const cleanGeminiKey = settings.gemini_api_key !== undefined && settings.gemini_api_key !== null && String(settings.gemini_api_key).trim() !== ''
+        ? String(settings.gemini_api_key).trim()
+        : null;
+      const cleanCalendarId = settings.calendar_id !== undefined && settings.calendar_id !== null && String(settings.calendar_id).trim() !== ''
+        ? String(settings.calendar_id).trim()
+        : null;
+      const cleanBotToken = settings.telegram_bot_token !== undefined && settings.telegram_bot_token !== null && String(settings.telegram_bot_token).trim() !== ''
+        ? String(settings.telegram_bot_token).trim()
+        : null;
+      const cleanTgChatId = settings.telegram_chat_id !== undefined && settings.telegram_chat_id !== null && String(settings.telegram_chat_id).trim() !== ''
+        ? String(settings.telegram_chat_id).trim()
+        : null;
+
+      // Build dynamic update safely with NULLIF protection against wiping existing credentials
       const updated = await sql`
         UPDATE users SET
-          phone_number = COALESCE(${settings.phone_number !== undefined ? settings.phone_number : null}, phone_number),
-          gemini_api_key = COALESCE(${settings.gemini_api_key !== undefined ? settings.gemini_api_key : null}, gemini_api_key),
+          phone_number = COALESCE(${cleanPhone}, phone_number),
+          gemini_api_key = COALESCE(${cleanGeminiKey}, gemini_api_key),
           model_name = COALESCE(${settings.model_name !== undefined ? settings.model_name : null}, model_name),
           ocr_engine = COALESCE(${settings.ocr_engine !== undefined ? settings.ocr_engine : null}, ocr_engine),
           ocr_service_url = COALESCE(${settings.ocr_service_url !== undefined ? settings.ocr_service_url : null}, ocr_service_url),
-          calendar_id = COALESCE(${settings.calendar_id !== undefined ? settings.calendar_id : null}, calendar_id),
+          calendar_id = COALESCE(${cleanCalendarId}, calendar_id),
           gdrive_root_folder_id = COALESCE(${settings.gdrive_root_folder_id !== undefined ? settings.gdrive_root_folder_id : null}, gdrive_root_folder_id),
           gdrive_root_folder_url = COALESCE(${settings.gdrive_root_folder_url !== undefined ? settings.gdrive_root_folder_url : null}, gdrive_root_folder_url),
-          telegram_bot_token = COALESCE(${settings.telegram_bot_token !== undefined ? settings.telegram_bot_token : null}, telegram_bot_token),
-          telegram_chat_id = COALESCE(${settings.telegram_chat_id !== undefined ? settings.telegram_chat_id : null}, telegram_chat_id),
+          telegram_bot_token = COALESCE(${cleanBotToken}, telegram_bot_token),
+          telegram_chat_id = COALESCE(${cleanTgChatId}, telegram_chat_id),
           updated_at = ${now}
         WHERE id = ${userId} OR email = ${userId}
         RETURNING *;
@@ -632,16 +648,16 @@ export async function updateUserSettings(
   const local = getLocalUsers();
   const existing = local[userId] || (await getUserById(userId));
   if (existing) {
-    if (settings.phone_number !== undefined) existing.phone_number = settings.phone_number;
-    if (settings.gemini_api_key !== undefined) existing.gemini_api_key = settings.gemini_api_key;
+    if (settings.phone_number !== undefined && String(settings.phone_number).trim() !== '') existing.phone_number = settings.phone_number;
+    if (settings.gemini_api_key !== undefined && String(settings.gemini_api_key).trim() !== '') existing.gemini_api_key = settings.gemini_api_key;
     if (settings.model_name !== undefined) existing.model_name = settings.model_name;
     if (settings.ocr_engine !== undefined) existing.ocr_engine = settings.ocr_engine;
     if (settings.ocr_service_url !== undefined) existing.ocr_service_url = settings.ocr_service_url;
-    if (settings.calendar_id !== undefined) existing.calendar_id = settings.calendar_id;
+    if (settings.calendar_id !== undefined && String(settings.calendar_id).trim() !== '') existing.calendar_id = settings.calendar_id;
     if (settings.gdrive_root_folder_id !== undefined) existing.gdrive_root_folder_id = settings.gdrive_root_folder_id;
     if (settings.gdrive_root_folder_url !== undefined) existing.gdrive_root_folder_url = settings.gdrive_root_folder_url;
-    if (settings.telegram_bot_token !== undefined) existing.telegram_bot_token = settings.telegram_bot_token;
-    if (settings.telegram_chat_id !== undefined) existing.telegram_chat_id = settings.telegram_chat_id;
+    if (settings.telegram_bot_token !== undefined && String(settings.telegram_bot_token).trim() !== '') existing.telegram_bot_token = settings.telegram_bot_token;
+    if (settings.telegram_chat_id !== undefined && String(settings.telegram_chat_id).trim() !== '') existing.telegram_chat_id = settings.telegram_chat_id;
     existing.updated_at = now;
 
     local[existing.id] = existing;
@@ -653,6 +669,62 @@ export async function updateUserSettings(
   }
 
   return null;
+}
+
+/**
+ * Updates Google OAuth access & refresh tokens in Neon PostgreSQL
+ */
+export async function updateUserGoogleTokens(params: {
+  userId: string | number;
+  accessToken?: string;
+  refreshToken?: string;
+  expiryDate?: number;
+}): Promise<boolean> {
+  const dbUrl = getDatabaseUrl();
+  const rawId = String(params.userId).replace(/^tg_/, '');
+  const tgId = `tg_${rawId}`;
+  const now = new Date().toISOString();
+
+  if (dbUrl) {
+    try {
+      await initDatabase();
+      const sql = neon(dbUrl);
+      await sql`
+        UPDATE users SET
+          google_access_token = COALESCE(${params.accessToken || null}, google_access_token),
+          google_refresh_token = CASE 
+            WHEN ${params.refreshToken || ''} != '' THEN ${params.refreshToken} 
+            ELSE google_refresh_token 
+          END,
+          google_token_expiry = COALESCE(${params.expiryDate || null}, google_token_expiry),
+          updated_at = ${now}
+        WHERE id = ${String(params.userId)}
+           OR id = ${rawId}
+           OR id = ${tgId}
+           OR email = ${String(params.userId)}
+           OR telegram_chat_id = ${rawId}
+           OR telegram_chat_id = ${tgId}
+      `;
+      return true;
+    } catch (err) {
+      console.error('Neon DB updateUserGoogleTokens error:', err);
+    }
+  }
+
+  // Fallback local
+  const local = getLocalUsers();
+  for (const k of [String(params.userId), rawId, tgId]) {
+    if (local[k]) {
+      if (params.accessToken) local[k].google_access_token = params.accessToken;
+      if (params.refreshToken) local[k].google_refresh_token = params.refreshToken;
+      if (params.expiryDate) local[k].google_token_expiry = params.expiryDate;
+      local[k].updated_at = now;
+      saveLocalUsers(local);
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -869,34 +941,57 @@ export async function getUserExtractedEvents(params: {
 export async function deleteExtractedEvent(params: {
   userId: string;
   email?: string;
+  telegramChatId?: string;
   eventId: string;
 }): Promise<boolean> {
   const dbUrl = getDatabaseUrl();
   const userId = params.userId;
   const userEmail = params.email || params.userId;
+  const rawTg = params.telegramChatId ? String(params.telegramChatId).replace(/^tg_/, '') : '';
+  const tgId = rawTg ? `tg_${rawTg}` : '';
 
   if (dbUrl) {
     try {
       await initDatabase();
       const sql = neon(dbUrl);
-      await sql`
+
+      // Clean up child documentation photos linked to this event
+      try {
+        await sql`DELETE FROM event_documentations WHERE event_id = ${params.eventId}`;
+      } catch (docErr) {
+        console.error('Neon DB delete attached documentation photos error:', docErr);
+      }
+
+      // Delete the event record matching user_id, email, or telegram chat ID variants
+      const rows = await sql`
         DELETE FROM extracted_events
         WHERE id = ${params.eventId}
-          AND (user_id = ${userId} OR user_id = ${userEmail})
+          AND (
+            user_id = ${userId}
+            OR user_id = ${userEmail}
+            OR (${rawTg} != '' AND (user_id = ${rawTg} OR user_id = ${tgId}))
+          )
+        RETURNING id;
       `;
-      return true;
+      return Boolean(rows && rows.length > 0);
     } catch (err) {
       console.error('Neon DB deleteExtractedEvent error:', err);
+      return false;
     }
   }
 
   // Fallback local
   const local = getLocalEvents();
+  const prevLen = local.length;
   const updated = local.filter(
-    e => !(e.id === params.eventId && (e.user_id === userId || e.user_id === userEmail))
+    e => !(e.id === params.eventId && (
+      e.user_id === userId || 
+      e.user_id === userEmail || 
+      (rawTg && (e.user_id === rawTg || e.user_id === tgId))
+    ))
   );
   saveLocalEvents(updated);
-  return true;
+  return updated.length < prevLen;
 }
 
 /**

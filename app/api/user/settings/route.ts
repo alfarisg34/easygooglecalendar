@@ -62,16 +62,16 @@ export async function POST(req: NextRequest) {
     }
 
     const updatedUser = await updateUserSettings(session.userId, {
-      phone_number: typeof phoneNumber === 'string' ? phoneNumber.trim() : phoneNumber,
-      gemini_api_key: typeof geminiApiKey === 'string' ? geminiApiKey.replace(/^["']|["']$/g, '').trim() : geminiApiKey,
+      phone_number: typeof phoneNumber === 'string' && phoneNumber.trim() !== '' ? phoneNumber.trim() : undefined,
+      gemini_api_key: typeof geminiApiKey === 'string' && geminiApiKey.trim() !== '' ? geminiApiKey.replace(/^["']|["']$/g, '').trim() : undefined,
       model_name: modelName,
       ocr_engine: ocrEngine,
       ocr_service_url: ocrServiceUrl,
-      calendar_id: typeof calendarId === 'string' ? calendarId.trim() : calendarId,
+      calendar_id: typeof calendarId === 'string' && calendarId.trim() !== '' ? calendarId.trim() : undefined,
       gdrive_root_folder_id: parsedDriveId,
       gdrive_root_folder_url: cleanDriveUrl,
-      telegram_bot_token: typeof telegramBotToken === 'string' ? telegramBotToken.trim() : telegramBotToken,
-      telegram_chat_id: typeof telegramChatId === 'string' ? telegramChatId.trim() : telegramChatId
+      telegram_bot_token: typeof telegramBotToken === 'string' && telegramBotToken.trim() !== '' ? telegramBotToken.trim() : undefined,
+      telegram_chat_id: typeof telegramChatId === 'string' && telegramChatId.trim() !== '' ? telegramChatId.trim() : undefined
     });
 
     if (!updatedUser) {

@@ -5,7 +5,15 @@ export const metadata: Metadata = {
   title: 'EasyCal // Serverless OCR & AI Agenda to Google Calendar',
   description: 'Ekstraksi dokumen surat dinas PDF, poster kegiatan, dan broadcast chat ke Google Calendar secara otomatis menggunakan Google Gemini AI dan OCR Service.',
   keywords: ['Google Calendar', 'OCR', 'PDF to Calendar', 'Gemini Multimodal', 'Telegram Bot', 'Kemnaker', 'Bimtek', 'Agenda Rapat'],
-  authors: [{ name: 'Alfari Ghilmana' }]
+  authors: [{ name: 'Alfari Ghilmana' }],
+  icons: {
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/favicon.ico', sizes: 'any' }
+    ],
+    shortcut: '/icon.svg',
+    apple: '/icon.svg'
+  }
 };
 
 export const viewport = {
@@ -21,6 +29,9 @@ export default function RootLayout({
   return (
     <html lang="id">
       <head>
+        <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+        <link rel="alternate icon" href="/favicon.ico" />
+        <link rel="apple-touch-icon" href="/icon.svg" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link

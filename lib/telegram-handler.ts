@@ -1207,14 +1207,21 @@ async function processAndDispatchEvent(params: {
     const dupResult = findDuplicateEvent(event, recentEvents);
 
     if (dupResult.isDuplicate && dupResult.matchedEvent) {
-      await handleDuplicateNoticeTelegram({
-        botToken,
-        chatId,
-        progressMessageId,
-        duplicateResult: dupResult,
-        hostOrigin
-      });
-      return;
+      const isConnectedNow = Boolean(userAuth && (userAuth.refreshToken || userAuth.google_refresh_token));
+      // SMART RECOVERY: If previous event was extracted while unlinked/un-synced, and user is now connected:
+      // Don't block with duplicate error! Proceed to sync it to Google Calendar!
+      if (!dupResult.matchedEvent.synced_to_calendar && isConnectedNow) {
+        console.log(`[Telegram] Bypassing duplicate block for un-synced event "${dupResult.matchedEvent.title}" because user is now connected.`);
+      } else {
+        await handleDuplicateNoticeTelegram({
+          botToken,
+          chatId,
+          progressMessageId,
+          duplicateResult: dupResult,
+          hostOrigin
+        });
+        return;
+      }
     }
   } catch (err) {
     console.error('Error during duplicate check in Telegram:', err);

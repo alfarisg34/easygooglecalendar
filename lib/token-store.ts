@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { getUserById, getUserByEmail, UserRecord } from './db';
+import { getUserById, getUserByEmail, getUserByTelegram, UserRecord } from './db';
 
 export interface UserGoogleAuth {
   userId: string; // e.g. "tg_123456789" or "web_user" or google_id
@@ -90,7 +90,10 @@ export async function getUserGoogleAuth(userId: string | number): Promise<UserGo
 
   // 2. Check Neon PostgreSQL Database
   try {
-    const dbUser = (await getUserById(strId)) || (await getUserByEmail(strId));
+    const rawId = strId.replace(/^tg_/, '');
+    const dbUser = (await getUserById(strId)) || 
+                   (await getUserByEmail(strId)) || 
+                   (await getUserByTelegram({ tgUserId: rawId }));
     if (dbUser && dbUser.google_refresh_token) {
       const authObj: UserGoogleAuth = {
         userId: dbUser.id,
@@ -104,6 +107,11 @@ export async function getUserGoogleAuth(userId: string | number): Promise<UserGo
       };
       memoryStore.set(key, authObj);
       memoryStore.set(strId, authObj);
+      memoryStore.set(dbUser.id, authObj);
+      if (dbUser.telegram_chat_id) {
+        memoryStore.set(`user_auth:tg_${dbUser.telegram_chat_id}`, authObj);
+        memoryStore.set(dbUser.telegram_chat_id, authObj);
+      }
       return authObj;
     }
   } catch (err) {

@@ -212,8 +212,14 @@ export default function HomePage() {
     if (!confirm('Hapus riwayat agenda ini?')) return;
     try {
       const res = await fetch(`/api/events?id=${id}`, { method: 'DELETE' });
-      if (res.ok) {
+      const data = await res.json();
+      if (res.ok && data.success) {
+        // Optimistically remove from state immediately for instant feedback
+        setEventsList(prev => prev.filter(item => item.id !== id));
+        setEventsTotal(prev => Math.max(0, prev - 1));
         fetchEventsHistory(eventsPage);
+      } else {
+        alert(data.error || 'Gagal menghapus riwayat agenda dari database.');
       }
     } catch (err) {
       console.error('Failed to delete event:', err);
@@ -599,6 +605,7 @@ export default function HomePage() {
         {/* Masthead Header */}
         <header className="masthead">
           <div className="brand-badge">
+            <img src="/icon.svg" alt="EasyCal Logo" className="brand-logo-img" width={32} height={32} />
             <span className="led amber" title="System Ready"></span>
             <span className="brand-title">EasyCal</span>
             <span className="brand-sub">AI Agenda & OCR Cockpit</span>
@@ -780,6 +787,7 @@ export default function HomePage() {
       {/* Top Cockpit Masthead */}
       <header className="masthead">
         <div className="brand-badge">
+          <img src="/icon.svg" alt="EasyCal Logo" className="brand-logo-img" width={32} height={32} />
           <span className="led" title="Authenticated & Active"></span>
           <span className="brand-title">EasyCal</span>
           <span className="brand-sub">Workspace</span>
@@ -2092,6 +2100,34 @@ export default function HomePage() {
                   />
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginTop: 4 }}>
                     Diperlukan jika Anda ingin bot Telegram sendiri yang langsung terhubung ke aplikasi Anda.
+                  </div>
+                </div>
+
+                {/* 7. Status Binding Akun Telegram */}
+                <div className="form-group" style={{ background: 'rgba(0, 136, 204, 0.08)', border: '1px solid rgba(0, 136, 204, 0.25)', borderRadius: 4, padding: '1rem', marginTop: '1.25rem' }}>
+                  <div className="form-label" style={{ marginBottom: '0.4rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <span style={{ color: '#FFF', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <Bot size={15} color="#0088cc" />
+                      <span>Status Akun Telegram (Auto-Sync)</span>
+                    </span>
+                    {settingsForm.telegramChatId ? (
+                      <span className="status-badge-tag badge-success" style={{ fontSize: '0.72rem' }}>
+                        <CheckCircle2 size={12} />
+                        <span>Terhubung (ID: {settingsForm.telegramChatId})</span>
+                      </span>
+                    ) : (
+                      <span className="status-badge-tag badge-offline" style={{ fontSize: '0.72rem' }}>
+                        <AlertCircle size={12} />
+                        <span>Belum Terhubung</span>
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)', lineHeight: 1.6 }}>
+                    {settingsForm.telegramChatId ? (
+                      <>Akun Telegram Anda aktif terhubung dengan Chat ID: <code>{settingsForm.telegramChatId}</code>. Pengaturan web yang disimpan kini secara otomatis melindungi dan mempertahankan koneksi ini agar tidak terputus.</>
+                    ) : (
+                      <>Akun Telegram belum terhubung. Buka bot <strong>@pdftogooglecalendarinvitationbot</strong> di Telegram, kirimkan surat/undangan, lalu klik tombol <strong>"⚡ Hubungkan Akun (Auto-Sync)"</strong> untuk menghubungkan akun Google Anda secara permanen.</>
+                    )}
                   </div>
                 </div>
 
