@@ -511,22 +511,17 @@ export default function HomePage() {
   };
 
   const handleSetupTelegramWebhook = async () => {
-    if (!settingsForm.telegramBotToken.trim()) {
-      alert('Mohon isi Telegram Bot Token terlebih dahulu di form Pengaturan.');
-      setActiveView('settings');
-      return;
-    }
     setTgStatus({ loading: true, info: undefined, error: undefined });
     try {
       const cleanToken = settingsForm.telegramBotToken.trim();
       const origin = window.location.origin;
-      const webhookUrl = `${origin}/api/telegram?bot_token=${encodeURIComponent(cleanToken)}${settingsForm.geminiApiKey ? `&gemini_key=${encodeURIComponent(settingsForm.geminiApiKey.trim())}` : ''}`;
+      const webhookUrl = `${origin}/api/telegram${cleanToken ? `?bot_token=${encodeURIComponent(cleanToken)}` : ''}${settingsForm.geminiApiKey ? `&gemini_key=${encodeURIComponent(settingsForm.geminiApiKey.trim())}` : ''}`;
 
       const res = await fetch('/api/telegram/setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          botToken: cleanToken,
+          botToken: cleanToken || undefined,
           webhookUrl,
           action: 'set_webhook'
         })
@@ -535,7 +530,7 @@ export default function HomePage() {
       if (data.ok) {
         setTgStatus({ 
           loading: false, 
-          info: `🎉 Webhook Telegram Berhasil Dipasang!\n\n🔗 URL: ${webhookUrl}\n\nSekarang buka bot Telegram Anda dan ketik /start untuk mulai menggunakan!` 
+          info: `🎉 Webhook Telegram Berhasil Disinkronkan ke Domain Ini!\n\n🔗 URL: ${data.configuredWebhookUrl || webhookUrl}\n\nSekarang buka bot Telegram Anda dan kirim pesan apa saja!` 
         });
       } else {
         setTgStatus({ 
@@ -549,11 +544,6 @@ export default function HomePage() {
   };
 
   const handleCheckTelegramWebhook = async () => {
-    if (!settingsForm.telegramBotToken.trim()) {
-      alert('Mohon isi Telegram Bot Token terlebih dahulu di form Pengaturan.');
-      setActiveView('settings');
-      return;
-    }
     setTgStatus({ loading: true, info: undefined, error: undefined });
     try {
       const cleanToken = settingsForm.telegramBotToken.trim();
@@ -561,7 +551,7 @@ export default function HomePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          botToken: cleanToken,
+          botToken: cleanToken || undefined,
           action: 'get_webhook_info'
         })
       });
@@ -570,10 +560,10 @@ export default function HomePage() {
         const info = data.result;
         setTgStatus({
           loading: false,
-          info: `📡 Status Webhook Telegram Saat Ini:\n\n• URL: ${info.url || '(Belum disetel / Kosong)'}\n• Pending Updates: ${info.pending_update_count}\n• Last Error: ${info.last_error_message || 'Tidak ada error (OK)'}`
+          info: `📡 Status Webhook Telegram Saat Ini:\n\n• URL Terdaftar: ${info.url || '(Belum disetel / Kosong)'}\n• Antrean Pending: ${info.pending_update_count}\n• Error Terakhir: ${info.last_error_message || 'Tidak ada error (OK)'}`
         });
       } else {
-        setTgStatus({ loading: false, error: data.description || 'Gagal memeriksa status webhook.' });
+        setTgStatus({ loading: false, error: data.description || data.error || 'Gagal memeriksa status webhook.' });
       }
     } catch (e: any) {
       setTgStatus({ loading: false, error: e.message });
