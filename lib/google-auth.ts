@@ -32,12 +32,17 @@ export function getEffectiveRedirectUri(req: NextRequest): string {
   const origin = getEffectiveOrigin(req);
   const envUri = process.env.GOOGLE_REDIRECT_URI?.trim();
 
-  // If envUri is set to localhost but we are accessed via production domain, prefer actual domain
+  // If envUri matches the current origin host, use it; otherwise dynamically use the request's origin
   if (envUri) {
-    if (envUri.includes('localhost') && !origin.includes('localhost')) {
-      return `${origin}/api/auth/callback`;
+    try {
+      const envHost = new URL(envUri).host;
+      const originHost = new URL(origin).host;
+      if (envHost === originHost) {
+        return envUri;
+      }
+    } catch (e) {
+      // Ignore URL parse error and fall back to request origin
     }
-    return envUri;
   }
 
   return `${origin}/api/auth/callback`;

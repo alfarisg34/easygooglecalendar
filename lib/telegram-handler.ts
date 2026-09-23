@@ -298,7 +298,7 @@ export async function handleTelegramWebhook(
   update: TelegramUpdate, 
   botToken: string, 
   geminiKey: string,
-  hostOrigin: string = 'https://easygooglecalendar.alfarighilmana.my.id'
+  hostOrigin: string = process.env.NEXT_PUBLIC_APP_URL || 'https://easycal.alfarighilmana.my.id'
 ) {
   const msg = update.message;
   if (!msg || !msg.chat || !msg.from) return { ok: true };

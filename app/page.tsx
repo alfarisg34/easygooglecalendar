@@ -651,7 +651,7 @@ export default function HomePage() {
                 💡 <strong>Solusi:</strong> Pastikan di Google Cloud Console &rarr; Credentials &rarr; Authorized redirect URIs terdapat:
                 <br />
                 <code style={{ color: '#FFF', display: 'inline-block', marginTop: 4 }}>
-                  {typeof window !== 'undefined' ? `${window.location.origin}/api/auth/callback` : 'https://easygooglecalendar.alfarighilmana.my.id/api/auth/callback'}
+                  {typeof window !== 'undefined' ? `${window.location.origin}/api/auth/callback` : 'https://easycal.alfarighilmana.my.id/api/auth/callback'}
                 </code>
               </div>
             </div>
