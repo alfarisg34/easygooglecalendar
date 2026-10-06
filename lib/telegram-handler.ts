@@ -11,6 +11,36 @@ import { extractPhotoMetadata, detectWatermarkTimestamp, matchPhotoToUserEvents,
 const TELEGRAM_API_URL = 'https://api.telegram.org';
 
 /**
+ * Shared usage guide for /help and the Panduan & Status keyboard button.
+ */
+function buildTelegramUsageGuide(): string {
+  return `📖 *PANDUAN EASYCAL*
+
+*Mencatat kegiatan*
+Kirim surat undangan PDF, poster JPG/PNG, atau teks lengkap undangan. Setelah berhasil diproses, agenda otomatis disimpan ke Google Calendar. Undangan yang terdeteksi duplikat tidak dibuat ulang.
+Untuk gambar poster, tambahkan caption \`#poster\` agar diproses sebagai agenda.
+
+*Foto dokumentasi*
+Kirim foto kegiatan dengan caption \`#foto\`. Bot mencocokkan foto dengan kegiatan yang sudah tercatat dan menyimpannya ke Google Drive tanpa membuat agenda baru. Jika kegiatan belum bisa ditentukan, pilih kegiatan melalui menu Foto Dokumentasi di web.
+
+*Folder Google Drive*
+\`/setdrive <link folder>\` — Atur folder induk untuk berkas kegiatan berikutnya.
+\`/gdrive\` — Lihat folder induk yang sedang digunakan.
+Contoh: \`/setdrive https://drive.google.com/drive/folders/ID_FOLDER\`
+
+*Perintah akun & bantuan*
+\`/start\` — Mulai menggunakan bot.
+\`/connect\` — Hubungkan akun Google.
+\`/status\` — Lihat panduan dan status konfigurasi akun.
+\`/apikey\` — Panduan memasang Gemini API Key.
+\`/disconnect\` — Putuskan koneksi akun dari bot.
+\`/help\` — Tampilkan panduan dan status ini.
+
+*Riwayat kegiatan*
+Buka web EasyCal dengan akun Google yang sama untuk melihat riwayat, berkas undangan, dan foto dokumentasi.`;
+}
+
+/**
  * Sends a Telegram chat message with optional inline keyboard buttons or reply keyboard
  */
 export async function sendTelegramMessage(params: {
@@ -422,31 +452,32 @@ export async function handleTelegramWebhook(
     return { ok: true };
   }
 
-  // Command: /status or /cek or "❓ Panduan & Status"
-  if (cleanText.startsWith('/status') || cleanText.startsWith('/cek') || cleanText.includes('status') || cleanText.includes('panduan')) {
-    if (userAuth && userAuth.email) {
-      await sendTelegramMessage({
-        botToken,
-        chatId,
-        text: `✅ *Status Akun Terhubung:*\n\n📧 *Email*: ${userAuth.email}\n👤 *Nama*: ${userAuth.name || '-'}\n📱 *No. HP*: ${dbUser?.phone_number || '(Belum diisi di web)'}\n🤖 *AI Gemini*: ${effectiveGeminiKey ? '✅ Siap' : '⚠️ Belum Terpasang'}\n🔄 *Mode*: Direct 0-Click Auto-Sync Aktif\n📅 *Target Kalender*: ${dbUser?.calendar_id || 'primary'}\n\n💡 Ketik \`/disconnect\` jika ingin mengganti atau memutuskan akun Google.`
-      });
-    } else {
-      const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
-      await sendTelegramMessage({
-        botToken,
-        chatId,
-        text: `⚠️ *Akun Belum Terhubung ke Google Calendar*\n\n` +
-          `Agar agenda otomatis tersimpan ke kalender, silakan login ke web dan isi No. HP & Gemini API Key Anda, lalu bagikan kontak atau hubungkan via link:`,
-        inlineButtons: [
-          { text: '🔑 Hubungkan Google Calendar', url: authUrl },
-          { text: '🌐 Buka Web EasyCal', url: hostOrigin }
-        ],
-        replyButtons: [
-          [{ text: '📱 Bagikan Kontak Saya (Verifikasi No. HP)', request_contact: true }],
-          [{ text: '❓ Panduan & Status' }]
-        ]
-      });
-    }
+  // Match complete commands so ordinary invitation text is not intercepted.
+  const command = cleanText.split(/\s+/, 1)[0].split('@', 1)[0];
+  const isGuideCommand = ['/help', '/bantuan', '/status', '/cek'].includes(command);
+  const isGuideButton = cleanText === '❓ panduan & status' || cleanText === 'panduan & status';
+  if (isGuideCommand || isGuideButton || cleanText === 'help') {
+    const isConnected = Boolean(userAuth?.refreshToken && userAuth.email);
+    const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
+    const statusText = isConnected
+      ? `✅ *Akun Google terhubung*\n📧 Email: ${userAuth?.email}\n👤 Nama: ${userAuth?.name || '-'}\n📱 No. HP: ${dbUser?.phone_number || '(Belum diisi di web)'}\n📅 Target kalender: ${dbUser?.calendar_id || 'primary'}`
+      : `⚠️ *Akun Google belum terhubung*\nKetik /connect atau tekan Hubungkan Google Calendar. Anda juga bisa login di web, mengisi nomor HP, lalu menekan Bagikan Kontak Saya.`;
+    const readinessText = `🤖 Gemini API Key: ${effectiveGeminiKey ? '✅ Tersedia' : '⚠️ Belum diatur — lihat /apikey'}\n📁 Folder induk Drive: ${dbUser?.gdrive_root_folder_url ? 'Sudah diatur — lihat /gdrive' : 'Belum diatur — menggunakan root Google Drive'}\n🔄 Auto-sync: ${isConnected && effectiveGeminiKey ? 'Siap digunakan' : 'Lengkapi koneksi Google dan Gemini API Key'}\n\nStatus ini berdasarkan konfigurasi tersimpan; akses Google Calendar dan validitas API Key diperiksa saat digunakan.`;
+
+    await sendTelegramMessage({
+      botToken,
+      chatId,
+      text: `${statusText}\n${readinessText}\n\n${buildTelegramUsageGuide()}`,
+      inlineButtons: [
+        ...(!isConnected ? [{ text: '🔑 Hubungkan Google Calendar', url: authUrl }] : []),
+        { text: '🌐 Buka Web EasyCal', url: hostOrigin },
+        ...(dbUser?.gdrive_root_folder_url ? [{ text: '📁 Buka Folder Drive', url: dbUser.gdrive_root_folder_url }] : [])
+      ],
+      replyButtons: [
+        ...(!isConnected ? [[{ text: '📱 Bagikan Kontak Saya (Verifikasi No. HP)', request_contact: true }]] : []),
+        [{ text: '❓ Panduan & Status' }]
+      ]
+    });
     return { ok: true };
   }
 
@@ -588,26 +619,6 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
   // Command: /apikey or /tutorial
   if (cleanText.startsWith('/apikey') || cleanText.startsWith('/key') || cleanText.startsWith('/tutorial') || cleanText.startsWith('/panduan_api')) {
     await sendGeminiApiKeyMissingTutorial({ botToken, chatId, hostOrigin });
-    return { ok: true };
-  }
-
-  // Command: /help
-  if (cleanText.startsWith('/help') || cleanText === 'help' || cleanText.startsWith('/bantuan')) {
-    await sendTelegramMessage({
-      botToken,
-      chatId,
-      text: `📖 *PANDUAN & PERINTAH BOT AGENDA*
-
-• \`/connect\` - Hubungkan akun Google Calendar pribadi Anda (0-Click Auto-Sync)
-• \`/status\` - Periksa status koneksi Google Calendar Anda
-• \`/apikey\` - Panduan langkah demi langkah memasang Google Gemini API Key
-• \`/disconnect\` - Putuskan akun Google Calendar dari bot ini
-• \`/help\` - Tampilkan bantuan ini
-
-━━━━━━━━━━━━━━━━━━━━
-💡 *CARA MENGGUNAKAN:*
-Kirimkan berkas *Surat Dinas PDF*, *Poster Flyer (Gambar)*, atau *Salinan Teks Pesan Undangan* kapan saja ke bot ini. Jadwal akan otomatis diekstrak dan dijadwalkan ke Google Calendar Anda! ✨`
-    });
     return { ok: true };
   }
 
