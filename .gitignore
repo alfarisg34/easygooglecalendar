@@ -28,6 +28,7 @@ yarn-error.log*
 .user_tokens.json
 .user_events.json
 .user_docs.json
+.telegram_agenda_sessions.json
 
 # vercel
 .vercel

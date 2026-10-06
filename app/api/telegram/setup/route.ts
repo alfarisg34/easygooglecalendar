@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
       const targetWebhookUrl = webhookUrl || `${origin}/api/telegram?bot_token=${encodeURIComponent(effectiveToken)}${process.env.GEMINI_API_KEY ? `&gemini_key=${encodeURIComponent(process.env.GEMINI_API_KEY)}` : ''}`;
 
       const res = await fetch(
-        `https://api.telegram.org/bot${effectiveToken}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}&allowed_updates=["message","edited_message"]`
+        `https://api.telegram.org/bot${effectiveToken}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}&allowed_updates=["message","edited_message","callback_query"]`
       );
       const data = await res.json();
       return NextResponse.json({
@@ -68,7 +68,7 @@ export async function GET(req: NextRequest) {
 
     if (action === 'set' || action === 'sync') {
       const targetWebhookUrl = `${origin}/api/telegram?bot_token=${encodeURIComponent(effectiveToken)}${process.env.GEMINI_API_KEY ? `&gemini_key=${encodeURIComponent(process.env.GEMINI_API_KEY)}` : ''}`;
-      const res = await fetch(`https://api.telegram.org/bot${effectiveToken}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}&allowed_updates=["message","edited_message"]`);
+      const res = await fetch(`https://api.telegram.org/bot${effectiveToken}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}&allowed_updates=["message","edited_message","callback_query"]`);
       const data = await res.json();
       return NextResponse.json({
         ok: data.ok,

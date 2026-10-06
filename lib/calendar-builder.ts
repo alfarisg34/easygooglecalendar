@@ -112,7 +112,7 @@ export function generateICSContent(event: CalendarEvent): string {
     `SUMMARY:${summary}`,
     `DESCRIPTION:${fullDescription}`,
     `LOCATION:${location}`,
-    'STATUS:CONFIRMED',
+    event.activity_status === 'cancelled' ? 'STATUS:CANCELLED' : 'STATUS:CONFIRMED',
     'END:VEVENT',
     'END:VCALENDAR'
   ].join('\r\n');

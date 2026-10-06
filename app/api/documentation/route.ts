@@ -113,8 +113,8 @@ export async function POST(req: NextRequest) {
 
     if (explicitEventId) {
       targetEvent = recentEvents.find(e => e.id === explicitEventId) || null;
-      if (!targetEvent && recentEvents.length > 0) {
-        targetEvent = recentEvents[0];
+      if (!targetEvent || targetEvent.activity_status === 'cancelled') {
+        return NextResponse.json({ success: false, error: 'Pilih kegiatan aktif milik Anda untuk mengunggah dokumentasi.' }, { status: 409 });
       }
     } else {
       matchResult = matchPhotoToUserEvents({
@@ -149,7 +149,7 @@ export async function POST(req: NextRequest) {
         photoMetadata: photoMeta,
         watermark: watermarkResult,
         effectiveTakenAt,
-        availableEvents: recentEvents.slice(0, 10),
+        availableEvents: recentEvents.filter(e => e.activity_status !== 'cancelled').slice(0, 10),
         message: 'Tidak ditemukan agenda kegiatan yang cocok dengan tanggal/jam foto ini. Silakan pilih agenda secara manual.'
       });
     }

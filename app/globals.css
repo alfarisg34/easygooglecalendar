@@ -859,3 +859,25 @@ body::before {
   background: rgba(255, 158, 11, 0.08);
   box-shadow: 0 0 10px var(--signal-amber-glow);
 }
+/* Activity cancellation and restoration */
+.agenda-filters { display: flex; align-items: end; gap: .65rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.agenda-filters label, .lifecycle-reason { display: grid; gap: .35rem; color: var(--text-dim); font-size: .8rem; }
+.agenda-filters input, .agenda-filters select, .lifecycle-reason textarea { padding: .6rem; background: var(--bg-inset); color: var(--text-main); border: var(--border-bright); border-radius: 4px; font: inherit; }
+.lifecycle-meta { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; font-size: .72rem; color: var(--text-dim); margin-bottom: .6rem; }
+.lifecycle-badge { padding: .2rem .45rem; border: 1px solid var(--signal-green); color: var(--signal-green); font-family: var(--font-mono); }
+.lifecycle-badge.is-cancelled { color: var(--signal-red); border-color: var(--signal-red); }
+.lifecycle-warning { color: var(--signal-amber); font-size: .85rem; margin: .7rem 0; line-height: 1.5; }
+.lifecycle-reason-text { font-size: .8rem; color: var(--text-dim); margin-bottom: .65rem; overflow-wrap: anywhere; }
+.lifecycle-notice { padding: .8rem; background: var(--bg-surface-elevated); border: var(--border-bright); margin-bottom: 1rem; }
+.lifecycle-notice p { margin-bottom: .65rem; font-size: .85rem; }
+.lifecycle-notice button { margin-right: .5rem; }
+.lifecycle-dialog { width: min(520px, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow-y: auto; margin: auto; padding: 1.5rem; background: var(--bg-surface); color: var(--text-main); border: var(--border-bright); border-radius: 6px; }
+.lifecycle-dialog::backdrop { background: var(--bg-glass); }
+.lifecycle-dialog h2 { margin-bottom: 1rem; font-family: var(--font-display); }
+.lifecycle-dialog p { line-height: 1.6; margin-bottom: .8rem; font-size: .9rem; }
+.lifecycle-event-title { font-weight: 700; overflow-wrap: anywhere; }
+.lifecycle-actions { display: flex; gap: .6rem; justify-content: flex-end; flex-wrap: wrap; margin-top: 1rem; }
+.lifecycle-reason textarea { resize: vertical; }
+.agenda-more { position: relative; }
+.agenda-more summary { cursor: pointer; padding: .2rem .5rem; color: var(--text-dim); list-style: none; }
+.agenda-more[open] button { position: absolute; right: 0; z-index: 2; min-width: 140px; padding: .65rem !important; gap: .4rem; background: var(--bg-surface-elevated) !important; border: var(--border-bright) !important; }

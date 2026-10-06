@@ -389,6 +389,7 @@ export function matchPhotoToUserEvents(params: {
   const photoDateStr = photoDt.toFormat('yyyy-MM-dd');
 
   for (const event of events) {
+    if (event.activity_status === 'cancelled') continue;
     const startDt = DateTime.fromISO(event.start_time).setZone('Asia/Jakarta');
     const endDt = DateTime.fromISO(event.end_time).setZone('Asia/Jakarta');
 

@@ -1,4 +1,5 @@
 export interface CalendarEvent {
+  activity_status?: 'active' | 'cancelled';
   title: string;
   start_time: string; // ISO 8601 (e.g. 2026-09-03T09:00:00+07:00)
   end_time: string;   // ISO 8601
@@ -45,6 +46,12 @@ export interface OCRServiceResponse {
 
 export interface TelegramUpdate {
   update_id: number;
+  callback_query?: {
+    id: string;
+    from: { id: number; is_bot: boolean; first_name: string; username?: string };
+    message?: TelegramUpdate['message'];
+    data?: string;
+  };
   message?: {
     message_id: number;
     from: {

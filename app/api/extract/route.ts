@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
     const recentEvents = await getRecentExtractedEventsForUser(candidateIds, 60);
     const duplicateCheck = findDuplicateEvent(result.event, recentEvents);
 
-    if (duplicateCheck.isDuplicate && duplicateCheck.matchedEvent && !forceSync) {
+    if (duplicateCheck.isDuplicate && duplicateCheck.matchedEvent && (!forceSync || duplicateCheck.matchedEvent.activity_status === 'cancelled')) {
       return NextResponse.json({
         ...result,
         icsContent,
@@ -147,7 +147,9 @@ export async function POST(req: NextRequest) {
         duplicateReason: duplicateCheck.reason,
         matchedEvent: duplicateCheck.matchedEvent,
         matchedDetails: duplicateCheck.matchedDetails,
-        message: 'Data kegiatan ini sudah pernah diproses sebelumnya.'
+        message: duplicateCheck.matchedEvent.activity_status === 'cancelled'
+          ? 'Kegiatan ini sudah dibatalkan. Gunakan Aktifkan kembali untuk memulihkan kegiatan yang sama.'
+          : 'Data kegiatan ini sudah pernah diproses sebelumnya.'
       });
     }
 
@@ -164,7 +166,8 @@ export async function POST(req: NextRequest) {
             synced: true,
             email: userAuth.email,
             calendarId: customCalendarId,
-            htmlLink: directInsert.htmlLink
+            htmlLink: directInsert.htmlLink,
+            eventId: directInsert.eventId
           };
         }
 
@@ -205,6 +208,8 @@ export async function POST(req: NextRequest) {
           speakers: result.event.speakers,
           description: result.event.description,
           google_calendar_url: autoSyncResult?.htmlLink || result.event.google_calendar_url,
+          google_event_id: autoSyncResult?.eventId,
+          google_calendar_id: customCalendarId || 'primary',
           synced_to_calendar: Boolean(autoSyncResult?.synced),
           gdrive_folder_id: gdriveResult?.folderId,
           gdrive_folder_url: gdriveResult?.folderUrl,

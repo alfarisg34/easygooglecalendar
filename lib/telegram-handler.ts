@@ -1,6 +1,7 @@
 import { TelegramUpdate, CalendarEvent } from './types';
 import { extractEventFromSource } from './gemini';
 import { DateTime } from 'luxon';
+import { handleTelegramAgenda } from './telegram-agenda';
 import { getUserGoogleAuth, deleteUserGoogleAuth } from './token-store';
 import { insertGoogleCalendarEvent } from './google-calendar-api';
 import { getUserByTelegram, getBotAdminSettings, disconnectTelegramUser, saveExtractedEvent, linkTelegramUserByPhone, getRecentExtractedEventsForUser, updateUserSettings, saveEventDocumentation, updateEventGdriveFolder } from './db';
@@ -35,6 +36,16 @@ Contoh: \`/setdrive https://drive.google.com/drive/folders/ID_FOLDER\`
 \`/apikey\` — Panduan memasang Gemini API Key.
 \`/disconnect\` — Putuskan koneksi akun dari bot.
 \`/help\` — Tampilkan panduan dan status ini.
+
+*Membatalkan & memulihkan kegiatan*
+\`/agenda\` — Daftar bernomor kegiatan aktif mendatang.
+\`batal 1\` — Pilih kegiatan nomor 1, lalu tekan Ya, batalkan.
+Alasan opsional: \`batal 1 Penyelenggara membatalkan\`.
+\`/dibatalkan\` — Daftar kegiatan yang dibatalkan.
+\`aktifkan 1\` — Pilih kegiatan pada daftar terakhir, lalu konfirmasi pemulihan.
+\`sinkron 1\` — Coba lagi jika perubahan kalender gagal.
+Nomor mengikuti daftar terakhir di chat ini, berlaku 15 menit. Halaman berikutnya: \`/agenda 2\` atau \`/dibatalkan 2\`.
+Pembatalan mempertahankan kegiatan dan berkas. Setelah sinkronisasi berhasil, kalender diberi tanda [DIBATALKAN], pengingat dimatikan, dan waktunya ditandai tersedia.
 
 *Riwayat kegiatan*
 Buka web EasyCal dengan akun Google yang sama untuk melihat riwayat, berkas undangan, dan foto dokumentasi.`;
@@ -330,7 +341,9 @@ export async function handleTelegramWebhook(
   geminiKey: string,
   hostOrigin: string = process.env.NEXT_PUBLIC_APP_URL || 'https://easycal.alfarighilmana.my.id'
 ) {
-  const msg = update.message;
+  const msg = update.callback_query?.message
+    ? { ...update.callback_query.message, from: update.callback_query.from, text: '' }
+    : update.message;
   if (!msg || !msg.chat || !msg.from) return { ok: true };
 
   const chatId = msg.chat.id;
@@ -411,6 +424,11 @@ export async function handleTelegramWebhook(
   const botAdmin = await getBotAdminSettings(botToken);
   const rawKey = dbUser?.gemini_api_key || botAdmin?.gemini_api_key || geminiKey || process.env.GEMINI_API_KEY || '';
   const effectiveGeminiKey = rawKey.replace(/^["']|["']$/g, '').trim();
+
+  if (await handleTelegramAgenda({ update, botToken, chatId, userId, chatType: msg.chat.type,
+    owner: dbUser ? { userId: dbUser.id, email: dbUser.email, telegramChatId: dbUser.telegram_chat_id }
+      : userAuth?.email ? { userId: String(userAuth.userId || `tg_${userId}`), email: userAuth.email, telegramChatId: String(userId) } : null,
+    calendarId: dbUser?.calendar_id, hostOrigin, send: sendTelegramMessage })) return { ok: true };
 
   // Command: /connect or /login
   if (cleanText.startsWith('/connect') || cleanText.startsWith('/login') || cleanText.startsWith('/auth')) {
@@ -1151,6 +1169,10 @@ async function handleDuplicateNoticeTelegram(params: {
 
   const inlineButtons: Array<{ text: string; url?: string }> = [];
 
+  if (matched.activity_status === 'cancelled') {
+    replyText += '\n\n🚫 Kegiatan ini sudah dibatalkan. Ketik /dibatalkan, lalu aktifkan sesuai nomor daftar untuk memulihkan kegiatan yang sama.';
+  }
+
   if (matched.google_calendar_url) {
     inlineButtons.push({
       text: '📅 Lihat di Google Calendar',
@@ -1221,7 +1243,7 @@ async function processAndDispatchEvent(params: {
       const isConnectedNow = Boolean(userAuth && (userAuth.refreshToken || userAuth.google_refresh_token));
       // SMART RECOVERY: If previous event was extracted while unlinked/un-synced, and user is now connected:
       // Don't block with duplicate error! Proceed to sync it to Google Calendar!
-      if (!dupResult.matchedEvent.synced_to_calendar && isConnectedNow) {
+      if (dupResult.matchedEvent.activity_status !== 'cancelled' && !dupResult.matchedEvent.synced_to_calendar && isConnectedNow) {
         console.log(`[Telegram] Bypassing duplicate block for un-synced event "${dupResult.matchedEvent.title}" because user is now connected.`);
       } else {
         await handleDuplicateNoticeTelegram({
@@ -1321,6 +1343,8 @@ async function dispatchCalendarResult(params: {
         speakers: event.speakers,
         description: event.description,
         google_calendar_url: insertResult.htmlLink || event.google_calendar_url,
+        google_event_id: insertResult.eventId,
+        google_calendar_id: calendarId || 'primary',
         synced_to_calendar: Boolean(insertResult.success),
         gdrive_folder_id: gdriveResult?.folderId,
         gdrive_folder_url: gdriveResult?.folderUrl,

@@ -39,6 +39,16 @@ export interface ExtractedEventRecord {
   description?: string;
   google_calendar_url?: string;
   google_event_id?: string;
+  google_calendar_id?: string;
+  activity_status?: 'active' | 'cancelled';
+  lifecycle_version?: number;
+  lifecycle_sync?: 'synced' | 'processing' | 'error' | 'local';
+  lifecycle_error?: string;
+  lifecycle_updated_at?: string;
+  cancellation_reason?: string;
+  cancelled_at?: string;
+  lifecycle_channel?: 'web' | 'telegram';
+  calendar_backup?: CalendarBackup | null;
   synced_to_calendar?: boolean;
   gdrive_folder_id?: string;
   gdrive_folder_url?: string;
@@ -48,6 +58,13 @@ export interface ExtractedEventRecord {
   file_name?: string;
   doc_count?: number;
   created_at: string;
+}
+
+export interface CalendarBackup {
+  summary: string;
+  description: string;
+  transparency: string;
+  reminders: { useDefault: boolean; overrides?: Array<{ method: string; minutes: number }> };
 }
 
 export interface EventDocumentationRecord {
@@ -166,6 +183,20 @@ export async function initDatabase(): Promise<boolean> {
     await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS gdrive_folder_url TEXT;`;
     await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS gdrive_file_id TEXT;`;
     await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS gdrive_file_url TEXT;`;
+    await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS google_calendar_id TEXT;`;
+    await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS activity_status TEXT NOT NULL DEFAULT 'active';`;
+    await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS lifecycle_version INTEGER NOT NULL DEFAULT 0;`;
+    await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS lifecycle_sync TEXT NOT NULL DEFAULT 'synced';`;
+    await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS lifecycle_error TEXT;`;
+    await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS lifecycle_updated_at TIMESTAMPTZ;`;
+    await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS cancellation_reason TEXT;`;
+    await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;`;
+    await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS lifecycle_channel TEXT;`;
+    await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS calendar_backup JSONB;`;
+    await sql`ALTER TABLE extracted_events ADD COLUMN IF NOT EXISTS lifecycle_history JSONB NOT NULL DEFAULT '[]'::jsonb;`;
+    await sql`CREATE TABLE IF NOT EXISTS telegram_agenda_sessions (
+      session_key TEXT PRIMARY KEY, payload JSONB NOT NULL, expires_at TIMESTAMPTZ NOT NULL
+    );`;
 
     await sql`CREATE INDEX IF NOT EXISTS idx_extracted_events_user ON extracted_events(user_id, created_at DESC);`;
 
@@ -806,6 +837,7 @@ export async function saveExtractedEvent(
     description: event.description || '',
     google_calendar_url: event.google_calendar_url || '',
     google_event_id: event.google_event_id || '',
+    google_calendar_id: event.google_calendar_id || '',
     synced_to_calendar: Boolean(event.synced_to_calendar),
     gdrive_folder_id: event.gdrive_folder_id || '',
     gdrive_folder_url: event.gdrive_folder_url || '',
@@ -827,14 +859,14 @@ export async function saveExtractedEvent(
           jp, speakers, description, google_calendar_url,
           google_event_id, synced_to_calendar, gdrive_folder_id,
           gdrive_folder_url, gdrive_file_id, gdrive_file_url,
-          source_type, file_name, created_at
+          source_type, file_name, created_at, google_calendar_id
         ) VALUES (
           ${record.id}, ${record.user_id}, ${record.title}, ${record.start_time}, ${record.end_time},
           ${record.is_online}, ${record.location}, ${record.meeting_link}, ${record.meeting_id_pass},
           ${record.jp}, ${record.speakers}, ${record.description}, ${record.google_calendar_url},
           ${record.google_event_id}, ${record.synced_to_calendar}, ${record.gdrive_folder_id},
           ${record.gdrive_folder_url}, ${record.gdrive_file_id}, ${record.gdrive_file_url},
-          ${record.source_type}, ${record.file_name}, ${record.created_at}
+          ${record.source_type}, ${record.file_name}, ${record.created_at}, ${record.google_calendar_id}
         )
         RETURNING *;
       `;
@@ -863,6 +895,8 @@ export async function getUserExtractedEvents(params: {
   telegramChatId?: string;
   page?: number;
   limit?: number;
+  status?: 'active' | 'cancelled' | 'all';
+  search?: string;
 }): Promise<{
   events: ExtractedEventRecord[];
   total: number;
@@ -879,6 +913,8 @@ export async function getUserExtractedEvents(params: {
   const tgId = `tg_${rawTg}`;
   const userId = params.userId;
   const userEmail = params.email || params.userId;
+  const activityFilter = params.status || 'all';
+  const search = `%${params.search || ''}%`;
 
   if (dbUrl) {
     try {
@@ -888,20 +924,20 @@ export async function getUserExtractedEvents(params: {
       // Count query
       const countRes = await sql`
         SELECT COUNT(*) as count FROM extracted_events
-        WHERE user_id = ${userId}
+        WHERE (user_id = ${userId}
            OR user_id = ${userEmail}
-           OR user_id = ${rawTg}
-           OR user_id = ${tgId}
+           OR (${rawTg} != '' AND (user_id = ${rawTg} OR user_id = ${tgId})))
+          AND (${activityFilter} = 'all' OR activity_status = ${activityFilter}) AND title ILIKE ${search}
       `;
       const total = countRes && countRes.length > 0 ? Number(countRes[0].count) : 0;
 
       // Paginated items query sorted by created_at DESC
       const rows = await sql`
         SELECT * FROM extracted_events
-        WHERE user_id = ${userId}
+        WHERE (user_id = ${userId}
            OR user_id = ${userEmail}
-           OR user_id = ${rawTg}
-           OR user_id = ${tgId}
+           OR (${rawTg} != '' AND (user_id = ${rawTg} OR user_id = ${tgId})))
+          AND (${activityFilter} = 'all' OR activity_status = ${activityFilter}) AND title ILIKE ${search}
         ORDER BY created_at DESC
         LIMIT ${limit} OFFSET ${offset}
       `;
@@ -921,7 +957,9 @@ export async function getUserExtractedEvents(params: {
   // Fallback to local
   const local = getLocalEvents();
   const filtered = local.filter(
-    e => e.user_id === userId || e.user_id === userEmail || (rawTg && (e.user_id === rawTg || e.user_id === tgId))
+    e => (e.user_id === userId || e.user_id === userEmail || (rawTg && (e.user_id === rawTg || e.user_id === tgId)))
+      && (activityFilter === 'all' || (e.activity_status || 'active') === activityFilter)
+      && e.title.toLowerCase().includes((params.search || '').toLowerCase())
   );
   const total = filtered.length;
   const sliced = filtered.slice(offset, offset + limit);
@@ -955,13 +993,6 @@ export async function deleteExtractedEvent(params: {
       await initDatabase();
       const sql = neon(dbUrl);
 
-      // Clean up child documentation photos linked to this event
-      try {
-        await sql`DELETE FROM event_documentations WHERE event_id = ${params.eventId}`;
-      } catch (docErr) {
-        console.error('Neon DB delete attached documentation photos error:', docErr);
-      }
-
       // Delete the event record matching user_id, email, or telegram chat ID variants
       const rows = await sql`
         DELETE FROM extracted_events
@@ -971,8 +1002,14 @@ export async function deleteExtractedEvent(params: {
             OR user_id = ${userEmail}
             OR (${rawTg} != '' AND (user_id = ${rawTg} OR user_id = ${tgId}))
           )
+          AND lifecycle_sync != 'processing'
         RETURNING id;
       `;
+      // Authorize parent deletion before removing its documentation records.
+      if (rows.length) {
+        try { await sql`DELETE FROM event_documentations WHERE event_id = ${params.eventId}`; }
+        catch (docErr) { console.error('Neon DB delete attached documentation photos error:', docErr); }
+      }
       return Boolean(rows && rows.length > 0);
     } catch (err) {
       console.error('Neon DB deleteExtractedEvent error:', err);
@@ -984,7 +1021,7 @@ export async function deleteExtractedEvent(params: {
   const local = getLocalEvents();
   const prevLen = local.length;
   const updated = local.filter(
-    e => !(e.id === params.eventId && (
+    e => !(e.id === params.eventId && e.lifecycle_sync !== 'processing' && (
       e.user_id === userId || 
       e.user_id === userEmail || 
       (rawTg && (e.user_id === rawTg || e.user_id === tgId))

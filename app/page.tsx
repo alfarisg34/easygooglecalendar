@@ -13,8 +13,9 @@ import {
 import { CalendarEvent } from '@/lib/types';
 import { DateTime } from 'luxon';
 import { buildGoogleCalendarUrl, generateICSContent } from '@/lib/calendar-builder';
+import EventLifecycleDialog, { LifecycleFields } from './EventLifecycleDialog';
 
-interface ExtractedEventItem {
+interface ExtractedEventItem extends LifecycleFields {
   id: string;
   user_id: string;
   title: string;
@@ -184,16 +185,24 @@ export default function HomePage() {
   const [eventsTotal, setEventsTotal] = useState<number>(0);
   const [eventsTotalPages, setEventsTotalPages] = useState<number>(1);
   const [eventsLoading, setEventsLoading] = useState<boolean>(false);
+  const [eventsStatus, setEventsStatus] = useState<'active' | 'cancelled' | 'all'>('all');
+  const [eventsSearch, setEventsSearch] = useState('');
+  const [lifecycleEvent, setLifecycleEvent] = useState<ExtractedEventItem | null>(null);
+  const [lifecycleBusy, setLifecycleBusy] = useState(false);
+  const [lifecycleError, setLifecycleError] = useState('');
+  const [lifecycleNotice, setLifecycleNotice] = useState('');
+  const historyRequest = useRef(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const fetchEventsHistory = async (page: number = 1) => {
+  const fetchEventsHistory = async (page: number = 1, status = eventsStatus, search = eventsSearch) => {
+    const request = ++historyRequest.current;
     try {
       setEventsLoading(true);
-      const res = await fetch(`/api/events?page=${page}&limit=${eventsLimit}`);
+      const res = await fetch(`/api/events?page=${page}&limit=${eventsLimit}&status=${status}&search=${encodeURIComponent(search)}`);
       if (res.ok) {
         const data = await res.json();
-        if (data.success) {
+        if (data.success && request === historyRequest.current) {
           setEventsList(data.events || []);
           setEventsTotal(data.total || 0);
           setEventsPage(data.page || 1);
@@ -203,8 +212,30 @@ export default function HomePage() {
     } catch (err) {
       console.error('Failed to fetch events history:', err);
     } finally {
-      setEventsLoading(false);
+      if (request === historyRequest.current) setEventsLoading(false);
     }
+  };
+
+  const handleLifecycleChange = async (item: ExtractedEventItem, action: 'cancel' | 'restore' | 'retry', reason = '') => {
+    if (lifecycleBusy) return;
+    setLifecycleBusy(true);
+    setLifecycleError('');
+    try {
+      const res = await fetch('/api/events', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: item.id, action, reason, version: item.lifecycle_version || 0 }) });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Kegiatan belum dapat diperbarui.');
+      setLifecycleNotice(data.message);
+      setLifecycleEvent(null);
+      if (data.event?.activity_status === 'cancelled' && extractedEvent?.title === item.title && extractedEvent?.start_time === item.start_time) setExtractedEvent(null);
+      if (duplicateWarning?.matchedEvent?.id === item.id) setDuplicateWarning(null);
+      await fetchEventsHistory(eventsPage);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Kegiatan belum dapat diperbarui.';
+      setLifecycleError(message);
+      if (action === 'retry') setLifecycleNotice(message);
+      await fetchEventsHistory(eventsPage);
+    } finally { setLifecycleBusy(false); }
   };
 
   const handleDeleteHistoryEvent = async (id: string, e: React.MouseEvent) => {
@@ -465,7 +496,7 @@ export default function HomePage() {
           duplicateReason: data.duplicateReason,
           matchedEvent: data.matchedEvent
         });
-        setExtractedEvent(data.event);
+        setExtractedEvent(data.matchedEvent?.activity_status === 'cancelled' ? null : data.event);
         setAutoSyncResult(null);
       } else {
         setStatusMessage('Selesai! Agenda berhasil diekstrak.');
@@ -1206,7 +1237,7 @@ export default function HomePage() {
                                     onChange={(e) => setSelectedCandidateId(e.target.value)}
                                   >
                                     <option value="">-- Pilih Agenda Kegiatan --</option>
-                                    {(photoResult.availableEvents || eventsList).map((ev: any) => (
+                                    {(photoResult.availableEvents || eventsList).filter((ev: ExtractedEventItem) => ev.activity_status !== 'cancelled').map((ev: any) => (
                                       <option key={ev.id} value={ev.id}>{ev.title} ({ev.start_time.substring(0, 10)})</option>
                                     ))}
                                   </select>
@@ -1455,6 +1486,23 @@ export default function HomePage() {
 
               <div className="chassis-body">
                 {/* Duplicate Event Notification Banner */}
+                <form className="agenda-filters" onSubmit={e => { e.preventDefault(); void fetchEventsHistory(1); }}>
+                  <label>Status kegiatan
+                    <select value={eventsStatus} onChange={e => {
+                      const status = e.target.value as 'active' | 'cancelled' | 'all';
+                      setEventsStatus(status); void fetchEventsHistory(1, status);
+                    }}>
+                      <option value="all">Semua</option><option value="active">Aktif</option><option value="cancelled">Dibatalkan</option>
+                    </select>
+                  </label>
+                  <label>Cari kegiatan<input type="search" value={eventsSearch} onChange={e => setEventsSearch(e.target.value)} placeholder="Judul kegiatan" maxLength={200} /></label>
+                  <button className="btn-tactile" type="submit" disabled={eventsLoading}>Cari</button>
+                </form>
+                {lifecycleNotice && <div className="lifecycle-notice" role="status">
+                  <p>{lifecycleNotice}</p>
+                  <button className="btn-tactile" onClick={() => { setEventsStatus('all'); setEventsSearch(''); void fetchEventsHistory(1, 'all', ''); }}>Lihat semua kegiatan</button>
+                  <button className="btn-tactile" aria-label="Tutup pemberitahuan" onClick={() => setLifecycleNotice('')}>Tutup</button>
+                </div>}
                 {duplicateWarning && (
                   <div style={{ 
                     background: 'rgba(255, 170, 0, 0.12)', 
@@ -1515,14 +1563,18 @@ export default function HomePage() {
                         </a>
                       )}
                       <button
-                        onClick={() => handleExtract(true)}
+                        onClick={() => {
+                          if (duplicateWarning.matchedEvent?.activity_status === 'cancelled') {
+                            setLifecycleEvent(duplicateWarning.matchedEvent); setLifecycleError('');
+                          } else void handleExtract(true);
+                        }}
                         disabled={isLoading}
                         className="btn-tactile"
                         style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem', background: 'rgba(255, 170, 0, 0.2)', border: '1px solid rgba(255, 170, 0, 0.5)', color: '#FFF' }}
                         title="Tetap simpan agenda ini ke Google Calendar sebagai entri baru"
                       >
                         <RefreshCw size={12} />
-                        <span>Tetap Simpan sebagai Jadwal Baru</span>
+                        <span>{duplicateWarning.matchedEvent?.activity_status === 'cancelled' ? 'Aktifkan kembali' : 'Tetap Simpan sebagai Jadwal Baru'}</span>
                       </button>
                     </div>
                   </div>
@@ -1624,10 +1676,10 @@ export default function HomePage() {
                   <div style={{ textAlign: 'center', padding: '4rem 1.5rem', color: 'var(--text-faint)' }}>
                     <Calendar size={48} style={{ opacity: 0.3, margin: '0 auto 1rem' }} />
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--text-dim)', marginBottom: '0.5rem' }}>
-                      BELUM ADA AGENDA DIEKSTRAK
+                      {eventsStatus !== 'all' || eventsSearch ? 'TIDAK ADA KEGIATAN SESUAI FILTER' : 'BELUM ADA AGENDA DIEKSTRAK'}
                     </div>
                     <p style={{ fontSize: '0.8125rem', maxWidth: 360, margin: '0 auto', lineHeight: 1.6 }}>
-                      Unggah surat dinas PDF, poster flyer, atau kirimkan pesan ke <strong>Bot Telegram</strong> untuk melihat riwayat agenda tersinkronisasi otomatis di sini.
+                      {eventsStatus !== 'all' || eventsSearch ? 'Ubah status atau kata pencarian untuk menemukan kegiatan lain.' : <>Unggah surat dinas PDF, poster flyer, atau kirimkan pesan ke <strong>Bot Telegram</strong> untuk melihat riwayat agenda tersinkronisasi otomatis di sini.</>}
                     </p>
                   </div>
                 ) : (
@@ -1683,19 +1735,36 @@ export default function HomePage() {
                                 </span>
                               </div>
 
-                              {/* Delete Button */}
+                              {/* Keep deletion in a separate menu from cancellation. */}
+                              <details className="agenda-more">
+                                <summary aria-label={`Aksi lainnya untuk ${item.title}`}>⋯</summary>
                               <button 
                                 onClick={(e) => handleDeleteHistoryEvent(item.id, e)}
+                                disabled={lifecycleBusy || item.lifecycle_sync === 'processing'}
                                 title="Hapus dari riwayat"
                                 style={{ background: 'transparent', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '0.2rem', display: 'flex', alignItems: 'center', transition: 'color 0.2s' }}
                                 onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--signal-red)')}
                                 onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-faint)')}
                               >
                                 <Trash2 size={13} />
+                                <span>Hapus riwayat</span>
                               </button>
+                              </details>
                             </div>
 
                             {/* Event Title */}
+                            <div className="lifecycle-meta">
+                              <span className={`lifecycle-badge ${item.activity_status === 'cancelled' ? 'is-cancelled' : ''}`}>
+                                {item.activity_status === 'cancelled' ? 'Dibatalkan' : 'Aktif'}
+                              </span>
+                              {item.activity_status === 'cancelled' && item.cancelled_at && <span>
+                                {DateTime.fromISO(item.cancelled_at).setZone('Asia/Jakarta').toFormat('dd MMM yyyy, HH:mm')} WIB · {item.lifecycle_channel === 'telegram' ? 'Telegram' : 'Web'}
+                              </span>}
+                            </div>
+                            {item.activity_status === 'cancelled' && item.cancellation_reason && <p className="lifecycle-reason-text">Alasan: {item.cancellation_reason}</p>}
+                            {(item.lifecycle_sync === 'error' || item.lifecycle_sync === 'processing') && <p className="lifecycle-warning">
+                              {item.lifecycle_sync === 'processing' ? 'Sinkronisasi kalender sedang diproses. Jika lebih dari 2 menit, coba sinkronisasi lagi.' : `Google Calendar belum diperbarui. ${item.activity_status === 'cancelled' ? 'Pengingat mungkin masih aktif. ' : ''}${item.lifecycle_error || ''}`}
+                            </p>}
                             <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#FFF', marginBottom: '0.6rem', lineHeight: 1.35 }}>
                               {item.title}
                             </h3>
@@ -1754,8 +1823,16 @@ export default function HomePage() {
 
                             {/* Action Buttons Row */}
                             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', paddingTop: '0.5rem', borderTop: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                              <button className={`btn-tactile ${item.activity_status === 'cancelled' ? '' : 'btn-danger'}`} disabled={lifecycleBusy || item.lifecycle_sync === 'processing'}
+                                onClick={() => { setLifecycleEvent(item); setLifecycleError(''); }}>
+                                {item.activity_status === 'cancelled' ? 'Aktifkan kembali' : 'Batalkan kegiatan'}
+                              </button>
+                              {(item.lifecycle_sync === 'error' || item.lifecycle_sync === 'processing') && <button className="btn-tactile" disabled={lifecycleBusy}
+                                onClick={() => void handleLifecycleChange(item, 'retry')}>{lifecycleBusy ? 'Memperbarui…' : 'Coba sinkronisasi lagi'}</button>}
                               <a 
                                 href={item.google_calendar_url || buildGoogleCalendarUrl(item as any)}
+                                aria-disabled={item.activity_status === 'cancelled' && !item.google_calendar_url}
+                                onClick={e => { if (item.activity_status === 'cancelled' && !item.google_calendar_url) e.preventDefault(); }}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="btn-tactile btn-primary"
@@ -1773,6 +1850,7 @@ export default function HomePage() {
                                   setPhotoError(null);
                                   window.scrollTo({ top: 120, behavior: 'smooth' });
                                 }}
+                                disabled={item.activity_status === 'cancelled'}
                                 className="btn-tactile"
                                 style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem', background: 'rgba(255, 158, 11, 0.1)', color: 'var(--signal-amber)', border: '1px solid rgba(255, 158, 11, 0.3)' }}
                                 title="Unggah foto dokumentasi untuk kegiatan ini"
@@ -1811,6 +1889,7 @@ export default function HomePage() {
 
                               <button 
                                 onClick={() => handleDownloadSpecificICS(item)}
+                                disabled={item.activity_status === 'cancelled'}
                                 className="btn-tactile"
                                 style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem' }}
                               >
@@ -1819,7 +1898,7 @@ export default function HomePage() {
                               </button>
 
                               <button 
-                                onClick={() => handleCopyText(`${item.title}\nWaktu: ${startDt.isValid ? startDt.toFormat('dd MMM yyyy, HH:mm') : item.start_time} WIB\nLokasi: ${item.location || '-'}\n${item.description || ''}`, item.id)}
+                                onClick={() => handleCopyText(`${item.activity_status === 'cancelled' ? '[DIBATALKAN] ' : ''}${item.title}\nWaktu: ${startDt.isValid ? startDt.toFormat('dd MMM yyyy, HH:mm') : item.start_time} WIB\nLokasi: ${item.location || '-'}\n${item.description || ''}`, item.id)}
                                 className="btn-tactile"
                                 style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem' }}
                               >
@@ -2286,6 +2365,9 @@ export default function HomePage() {
           </div>
         </div>
       )}
+      {lifecycleEvent && <EventLifecycleDialog event={lifecycleEvent} busy={lifecycleBusy} error={lifecycleError}
+        onClose={() => setLifecycleEvent(null)} onConfirm={reason => void handleLifecycleChange(lifecycleEvent,
+          lifecycleEvent.activity_status === 'cancelled' ? 'restore' : 'cancel', reason)} />}
     </main>
   );
 }

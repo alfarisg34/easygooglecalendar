@@ -59,3 +59,16 @@ Buka [http://localhost:3000](http://localhost:3000) di browser Anda.
 2. Pada Vercel Dashboard, buka menu **Storage** -> Buat **Postgres (Neon)** -> Sambungkan (*Connect*) ke project Anda.
 3. Tambahkan environment variables `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, dan `SESSION_SECRET` di project settings Vercel.
 4. Deploy! Neon PostgreSQL akan otomatis diinisialisasi tabelnya saat pertama kali digunakan.
+
+## Membatalkan dan memulihkan kegiatan
+
+- Web: pada kartu riwayat, pilih **Batalkan kegiatan**, isi alasan opsional, lalu konfirmasi. Filter **Dibatalkan** menyediakan **Aktifkan kembali**.
+- Telegram: ketik `/agenda`, pilih nomor dengan `batal 1` (atau `batal 1 alasan`), lalu tekan **Ya, batalkan**. Ketik `/dibatalkan` dan `aktifkan 1` untuk memulihkan.
+- Nomor Telegram merujuk ke daftar terakhir per pengguna/chat dan berlaku 15 menit. Gunakan `/agenda 2` atau `/dibatalkan 2` untuk halaman berikutnya.
+- Pembatalan mempertahankan riwayat, undangan, dan dokumentasi. Event Google yang sama diberi judul `[DIBATALKAN]`, pengingat dinonaktifkan, dan waktunya ditandai tersedia. Pemulihan mengembalikan konfigurasi sebelumnya.
+- Kegagalan sinkronisasi ditampilkan secara eksplisit; gunakan **Coba sinkronisasi lagi** di web atau `sinkron 1` pada daftar Telegram terbaru.
+- Skema tambahan dimigrasikan otomatis melalui `initDatabase`. Sesi daftar Telegram disimpan di Neon; mode lokal menggunakan file yang diabaikan Git.
+- Webhook lama otomatis ditambahkan `callback_query` ketika `/agenda` atau `/dibatalkan` digunakan pada endpoint EasyCal yang sama. Jika Telegram menolak pembaruan, sinkronkan webhook melalui Pengaturan Web.
+- Fitur ini mengelola agenda EasyCal tanpa peserta undangan Google. Event yang sudah dihapus di Google Calendar perlu dipulihkan di Google Calendar sebelum sinkronisasi ulang.
+
+Verifikasi tanpa mengubah kegiatan nyata: `node --experimental-strip-types scratch/test-event-lifecycle.ts`.
