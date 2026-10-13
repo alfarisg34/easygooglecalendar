@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest } from '@/lib/auth-session';
 import { getUserById, getUserByEmail, getRecentExtractedEventsForUser, saveEventDocumentation, getEventDocumentations, updateEventGdriveFolder } from '@/lib/db';
-import { extractPhotoMetadata, detectWatermarkTimestamp, matchPhotoToUserEvents, classifyImageIntent } from '@/lib/photo-matcher';
+import { extractPhotoMetadata, detectWatermarkTimestamp, matchPhotoToUserEvents, classifyImageIntent, parseWatermarkTimestamp, resolvePhotoTimestamp } from '@/lib/photo-matcher';
 import { uploadDocumentationPhotoToDrive } from '@/lib/google-drive-api';
 import { getUserGoogleAuth } from '@/lib/token-store';
 import { DateTime } from 'luxon';
@@ -59,32 +59,13 @@ export async function POST(req: NextRequest) {
       }, { status: 422 });
     }
 
-    // 3. Detect Watermark Timestamp if EXIF timestamp is missing (e.g. from WhatsApp compression)
-    let watermarkResult = null;
-    if (classification?.watermarkData?.detected && classification.watermarkData.date) {
-      const wm = classification.watermarkData;
-      const timePart = wm.time || '10:00:00';
-      const tzPart = wm.timezone || '+07:00';
-      const combined = `${wm.date}T${timePart}${tzPart}`;
-      const dt = DateTime.fromISO(combined);
-      watermarkResult = {
-        detected: true,
-        detectedDateTime: dt.isValid ? dt.toISO() || combined : combined,
-        locationText: wm.location || '',
-        rawWatermarkText: wm.rawText || ''
-      };
-    } else if (!photoMeta.takenAt && effectiveApiKey) {
-      watermarkResult = await detectWatermarkTimestamp({
-        base64Data,
-        mimeType,
-        apiKey: effectiveApiKey,
-        model: dbUser?.model_name
-      });
+    // Read camera evidence; upload time must never select an event automatically.
+    let watermarkResult = parseWatermarkTimestamp(classification.watermarkData);
+    if (!photoMeta.takenAt && !watermarkResult.detected && effectiveApiKey) {
+      watermarkResult = await detectWatermarkTimestamp({ base64Data, mimeType, apiKey: effectiveApiKey, model: dbUser?.model_name });
     }
-
-    // Determine effective taken_at timestamp
-    const nowIso = new Date().toISOString();
-    let effectiveTakenAt = photoMeta.takenAt || watermarkResult?.detectedDateTime || nowIso;
+    const captureTime = resolvePhotoTimestamp(photoMeta, watermarkResult);
+    const effectiveTakenAt = captureTime || new Date().toISOString(); // Used only after an explicit manual choice.
     let matchMethod: 'exif_timestamp' | 'ocr_watermark' | 'manual_selection' | 'fallback_today' = 'exif_timestamp';
 
     if (explicitEventId) {
@@ -108,6 +89,13 @@ export async function POST(req: NextRequest) {
     ];
     const recentEvents = await getRecentExtractedEventsForUser(candidateUserIds, 60);
 
+    if (!captureTime && !explicitEventId) {
+      return NextResponse.json({ success: false, noMatchFound: true, timeMissing: true,
+        photoMetadata: photoMeta, watermark: watermarkResult,
+        availableEvents: recentEvents.filter(event => event.activity_status !== 'cancelled').slice(0, 10),
+        message: 'Waktu pengambilan foto belum terbaca. Pilih kegiatan secara manual; waktu unggah tidak dipakai untuk pencocokan otomatis.' });
+    }
+
     let targetEvent = null;
     let matchResult = null;
 
@@ -125,7 +113,7 @@ export async function POST(req: NextRequest) {
 
       // Check if ambiguous (multiple events on same date with high proximity)
       const highCandidates = matchResult.candidates.filter(c => c.score >= 0.85);
-      if (highCandidates.length > 1 && !forceUpload) {
+      if (highCandidates.length > 1) {
         return NextResponse.json({
           success: false,
           requiresSelection: true,
@@ -200,7 +188,7 @@ export async function POST(req: NextRequest) {
       file_name: uploadRes.fileName || file.name,
       file_size: file.size,
       mime_type: mimeType,
-      taken_at: effectiveTakenAt,
+      taken_at: captureTime || undefined,
       match_method: matchMethod
     });
 
@@ -212,6 +200,7 @@ export async function POST(req: NextRequest) {
       photoMetadata: photoMeta,
       watermark: watermarkResult,
       effectiveTakenAt,
+      captureTime,
       matchMethod,
       confidence: matchResult?.confidence ?? 1.0,
       message: `Foto dokumentasi berhasil diarsipkan ke folder Google Drive kegiatan: "${targetEvent.title}"`

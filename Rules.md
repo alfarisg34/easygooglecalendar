@@ -95,7 +95,7 @@ Proyek **EasyCal** mematuhi standar rekayasa perangkat lunak modern untuk aplika
 ## 8. Telegram Bot Engineering Rules
 
 * **Markdown Parsing Fallback**: Jika pemanggilan `sendMessage` atau `editMessageText` dengan `parse_mode: 'Markdown'` menghasilkan error dari Telegram (biasanya karena karakter khusus `_`, `*`, `[` di dalam teks judul rapat), sistem **wajib** secara otomatis mencoba kirim ulang (*retry*) tanpa `parse_mode` (sebagai teks biasa).
-* **Pemberhentian Timer Animasi**: Setiap instance animasi progress bar Telegram (`startTelegramProgressBar`) wajib dipanggil fungsi `.stop()`-nya segera setelah proses AI selesai atau ketika error tertangkap dalam blok `try...finally`.
+* **Pemberhentian Timer Animasi**: Setiap instance animasi progress bar Telegram (`startTelegramProgressBar`) wajib ditutup dengan `await progressTracker.stop()` segera setelah proses AI selesai atau ketika error tertangkap. Tunggu edit progress yang sedang berlangsung sebelum menulis hasil akhir agar animasi tidak menimpanya. Alur berhasil, gagal, dan pemilihan yang tidak valid harus menyelesaikan pesan progress; jika edit ditolak Telegram, kirim hasil sebagai pesan baru.
 * **1-Tap Contact Verification**: Saat menerima `msg.contact`, nomor telepon harus dinormalisasi (contoh: `+62812...` atau `0812...` -> `62812...`) sebelum dicocokkan ke database.
 
 ---
@@ -110,6 +110,10 @@ Proyek **EasyCal** mematuhi standar rekayasa perangkat lunak modern untuk aplika
 * **Pencocokan Temporal & Toleransi Waktu**:
   * Pencocokan waktu foto terhadap kegiatan di kalender menggunakan rentang toleransi: `start_time - 1 jam` s.d. `end_time + 2 jam`.
   * Jika terdapat lebih dari 1 agenda dalam rentang waktu yang sama (*ambiguous match*), sistem **wajib** melibatkan pengguna (*human-in-the-loop*) untuk memilih kegiatan yang tepat sebelum mengunggah.
+* **Bukti Waktu Pengambilan Wajib untuk Auto-Filing**:
+  * Jangan mengganti EXIF/watermark yang hilang dengan waktu saat unggah untuk memilih kegiatan. Tanggal dan jam harus valid; jam OCR yang tidak terbaca tidak boleh diisi jam default.
+  * Jika waktu tidak diketahui, tidak ada kandidat dalam toleransi, atau kandidat ambigu, arahkan ke pemilihan kegiatan manual. Kesamaan tanggal saja tidak cukup untuk auto-filing dan bot tidak membuat folder terpisah untuk kegiatan yang belum diketahui.
+  * Pilihan manual web boleh mengunggah tanpa waktu foto, tetapi taken_at harus kosong dan UI harus menyatakan waktu pengambilan tidak terbaca. created_at merekam waktu pencatatan; prefix nama berkas boleh memakai waktu unggah jika waktu pengambilan tidak diketahui.
 * **Penanganan Foto Kompresi Pesan Singkat (Watermark Fallback)**:
   * Aplikasi perpesanan seperti WhatsApp secara agresif menghapus (*strip*) metadata EXIF.
   * Jika EXIF kosong, sistem wajib menggunakan Vision OCR untuk mendeteksi cap stempel watermark tanggal, jam, atau koordinat lokasi (misalnya dari aplikasi *GPS Map Camera* atau *Timestamp Camera*).

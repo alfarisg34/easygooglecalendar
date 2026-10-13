@@ -1,6 +1,6 @@
 # 📅 EasyCal // Serverless OCR & Gemini Calendar Studio
 
-Versi rilis: **1.1.0**. Lihat [catatan rilis](CHANGELOG.md) untuk perubahan dan batas verifikasi.
+Versi rilis: **1.1.1**. Lihat [catatan rilis](CHANGELOG.md) untuk perubahan dan batas verifikasi.
 
 
 Layanan publik **Serverless OCR & Multimodal AI** untuk mengekstrak dokumen surat dinas (PDF), poster kegiatan (JPG/PNG), dan pesan broadcast chat ke **Google Calendar** secara instan dengan otentikasi **Google OAuth 2.0**, manajemen pengaturan kredensial (BYOK), dan integrasi basis data **Neon PostgreSQL** di **Vercel**.
@@ -76,12 +76,25 @@ Buka [http://localhost:3000](http://localhost:3000) di browser Anda.
 
 Verifikasi tanpa mengubah kegiatan nyata: `node --experimental-strip-types scratch/test-event-lifecycle.ts`.
 
+## Waktu foto dokumentasi & pemilihan kegiatan
+
+Foto dicocokkan memakai waktu pengambilan dari EXIF atau watermark kamera, bukan waktu saat dikirim ke bot. Misalnya, stempel 12 Oktober pukul 10.18 harus dicocokkan ke kegiatan pada waktu tersebut walaupun foto diunggah tanggal 13 Oktober.
+
+Jika tanggal/jam tidak terbaca, tidak ada kegiatan dalam toleransi satu jam sebelum sampai dua jam sesudah kegiatan, atau beberapa kegiatan cocok, bot belum mengunggah foto. Buka menu **Foto Dokumentasi** di web, unggah foto, lalu pilih kegiatan yang benar secara manual. Kesamaan tanggal saja menjadi saran, bukan dasar pengarsipan otomatis. Untuk pemilihan manual tanpa waktu pengambilan, waktu tersebut disimpan kosong; prefix nama berkas dapat memakai waktu unggah.
+
+Balasan berhasil menampilkan waktu foto dan sumber waktunya. Album diproses per foto sehingga tiga foto dapat menghasilkan tiga balasan. Caption `#poster` tetap memilih ekstraksi agenda meskipun dikirim dalam album.
+
+Verifikasi tanpa layanan nyata: `node --experimental-strip-types scratch/test-photo-timestamp.ts`.
+
 ## Memperbarui waktu atau tempat melalui Telegram
 
 - Kirim surat PDF atau teks perubahan yang menyebut judul kegiatan. AI membaca nilai baru pada narasi **semula ... menjadi ...**, ralat, atau perubahan jadwal/tempat. Pembaruan otomatis hanya dilakukan jika satu kegiatan aktif cocok dengan judul dan tanggal semula (jika tersedia).
 - Jika kegiatan belum dapat ditentukan, ketik `/agenda`, lalu `/update 1 jam menjadi 13.00` atau `/update 1 tempat menjadi Ruang B`. Nomor merujuk ke daftar terakhir dan berlaku 15 menit. Untuk surat gambar, gunakan caption `#poster` agar masuk alur ekstraksi agenda.
 - Perubahan jam saja mempertahankan tanggal dan durasi lama; perubahan tempat saja mempertahankan waktu. Jika jam akhir baru disebutkan, jam tersebut digunakan. Perubahan menggunakan event Google Calendar dan folder dokumentasi yang sama.
 - Jika Google Calendar gagal diperbarui, jadwal baru disimpan di EasyCal. Ketik `/agenda` lagi, lalu `sinkron 1` sesuai nomor kegiatan untuk mencoba ulang. Pemilihan yang kedaluwarsa atau ambigu tidak membuat agenda baru.
+- Hasil update atau pesan kegagalannya mengganti pesan progress. Jika Telegram menolak edit, hasil dikirim sebagai pesan baru. Balasan sukses menunjukkan pembaruan sudah selesai; persentase animasi merupakan indikator menunggu, bukan ukuran sinkronisasi Google.
+
+Verifikasi penutupan progress tanpa chat nyata: `node --experimental-strip-types scratch/test-telegram-progress.ts`.
 
 ## Mengatasi `invalid_grant` pada Google Drive
 

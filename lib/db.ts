@@ -1151,7 +1151,7 @@ export async function saveEventDocumentation(
     file_name: doc.file_name || 'foto_dokumentasi.jpg',
     file_size: doc.file_size || 0,
     mime_type: doc.mime_type || 'image/jpeg',
-    taken_at: doc.taken_at || now,
+    taken_at: doc.taken_at || undefined,
     match_method: doc.match_method || 'exif_timestamp',
     created_at: now
   };
@@ -1166,7 +1166,7 @@ export async function saveEventDocumentation(
           file_name, file_size, mime_type, taken_at, match_method, created_at
         ) VALUES (
           ${record.id}, ${record.event_id}, ${record.user_id}, ${record.gdrive_file_id}, ${record.gdrive_file_url},
-          ${record.file_name}, ${record.file_size}, ${record.mime_type}, ${record.taken_at}, ${record.match_method}, ${record.created_at}
+          ${record.file_name}, ${record.file_size}, ${record.mime_type}, ${record.taken_at || null}, ${record.match_method}, ${record.created_at}
         )
         RETURNING *;
       `;

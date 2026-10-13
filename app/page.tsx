@@ -1149,7 +1149,7 @@ export default function HomePage() {
                                   <strong>Kegiatan:</strong> {photoResult.event?.title}
                                 </div>
                                 <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginBottom: '0.75rem' }}>
-                                  Waktu Foto: {DateTime.fromISO(photoResult.effectiveTakenAt).setZone('Asia/Jakarta').toFormat('dd MMM yyyy, HH:mm')} WIB &bull; Metode: {photoResult.matchMethod === 'exif_timestamp' ? 'Metadata EXIF Kamera' : photoResult.matchMethod === 'ocr_watermark' ? 'OCR Watermark Timestamp' : 'Pilihan Pengguna'}
+                                  Waktu Foto: {photoResult.captureTime === null ? 'Tidak terbaca (kegiatan dipilih manual)' : `${DateTime.fromISO(photoResult.effectiveTakenAt).setZone('Asia/Jakarta').toFormat('dd MMM yyyy, HH:mm')} WIB`} &bull; Metode: {photoResult.matchMethod === 'exif_timestamp' ? 'Metadata EXIF Kamera' : photoResult.matchMethod === 'ocr_watermark' ? 'OCR Watermark Timestamp' : 'Pilihan Pengguna'}
                                 </div>
                                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                                   {(photoResult.uploadResult?.folderUrl || photoResult.event?.gdrive_folder_url) && (

@@ -10,7 +10,7 @@ import { insertGoogleCalendarEvent } from './google-calendar-api';
 import { getUserByTelegram, getBotAdminSettings, disconnectTelegramUser, saveExtractedEvent, linkTelegramUserByPhone, getRecentExtractedEventsForUser, updateUserSettings, saveEventDocumentation, updateEventGdriveFolder } from './db';
 import { findDuplicateEvent, DuplicateDetectionResult } from './duplicate-detector';
 import { createEventFolderAndUpload, parseGoogleDriveFolderId, uploadDocumentationPhotoToDrive } from './google-drive-api';
-import { extractPhotoMetadata, detectWatermarkTimestamp, matchPhotoToUserEvents, classifyImageIntent } from './photo-matcher';
+import { extractPhotoMetadata, detectWatermarkTimestamp, matchPhotoToUserEvents, classifyImageIntent, parseWatermarkTimestamp, resolvePhotoTimestamp } from './photo-matcher';
 
 const TELEGRAM_API_URL = 'https://api.telegram.org';
 
@@ -164,13 +164,16 @@ export async function editTelegramMessage(params: {
     });
     if (!res.ok) {
       delete bodyPayload.parse_mode;
-      await fetch(url, {
+      const retry = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bodyPayload)
       });
+      const data = await retry.json();
+      return retry.ok && data.ok === true;
     }
-    return true;
+    const data = await res.json();
+    return data.ok === true;
   } catch (err) {
     return false;
   }
@@ -211,6 +214,7 @@ export function startTelegramProgressBar(params: {
 
   let elapsedTicks = 0;
   let isStopped = false;
+  let pendingEdit: Promise<boolean> | null = null;
 
   const dynamicStages = [
     { emote: '⏳', action: 'Mengunduh & memverifikasi dokumen surat', detail: 'Memeriksa format berkas & membaca dokumen...' },
@@ -229,6 +233,7 @@ export function startTelegramProgressBar(params: {
       clearInterval(intervalId);
       return;
     }
+    if (pendingEdit) return;
 
     elapsedTicks++;
     const stageIndex = Math.min(elapsedTicks - 1, dynamicStages.length - 1);
@@ -247,20 +252,23 @@ export function startTelegramProgressBar(params: {
       `📄 *Berkas*: \`${fileName}\` (${typeLabel})\n` +
       `💡 *Status*: _${stage.detail}_`;
 
-    await editTelegramMessage({
+    pendingEdit = editTelegramMessage({
       botToken,
       chatId,
       messageId,
       text: updateText
     });
+    await pendingEdit;
+    pendingEdit = null;
 
-    sendTelegramChatAction({ botToken, chatId, action: 'typing' });
+    if (!isStopped) void sendTelegramChatAction({ botToken, chatId, action: 'typing' });
   }, 2200);
 
   return {
-    stop: () => {
+    stop: async () => {
       isStopped = true;
       clearInterval(intervalId);
+      await pendingEdit;
     }
   };
 }
@@ -689,7 +697,7 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
         mimeType
       });
 
-      if (progressTracker) progressTracker.stop();
+      if (progressTracker) await progressTracker.stop();
 
       if (!result.success || !result.event) {
         const errMsg = result.error || 'Dokumen tidak dapat dibaca oleh AI.';
@@ -729,7 +737,7 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
         }
       });
     } catch (err: any) {
-      if (progressTracker) progressTracker.stop();
+      if (progressTracker) await progressTracker.stop();
       if (initRes.message_id) {
         await editTelegramMessage({
           botToken,
@@ -797,7 +805,7 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
       const photoMeta = await extractPhotoMetadata(buffer);
 
       // Check classification: Is this an activity documentation photo or a flyer?
-      let isDocPhoto = isExplicitDoc || isMultiPhoto;
+      let isDocPhoto = !isExplicitPoster && (isExplicitDoc || isMultiPhoto);
       let classificationResult: any = null;
 
       if (!isDocPhoto && !isExplicitPoster) {
@@ -813,57 +821,43 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
 
       // BRANCH A: Activity Documentation Photo (Auto-File to Google Drive)
       if (isDocPhoto) {
-        if (progressTracker) progressTracker.stop();
+        if (progressTracker) await progressTracker.stop();
 
         const candidateUserIds = [userId, `tg_${userId}`, dbUser?.id, dbUser?.email, userAuth?.userId, userAuth?.email];
         const recentEvents = await getRecentExtractedEventsForUser(candidateUserIds, 50);
 
-        // Detect watermark timestamp if EXIF is missing
-        let watermarkResult: any = null;
-        if (classificationResult?.watermarkData?.detected && classificationResult.watermarkData.date) {
-          const wm = classificationResult.watermarkData;
-          const timePart = wm.time || '10:00:00';
-          const tzPart = wm.timezone || '+07:00';
-          const combined = `${wm.date}T${timePart}${tzPart}`;
-          const dt = DateTime.fromISO(combined);
-          watermarkResult = {
-            detected: true,
-            detectedDateTime: dt.isValid ? dt.toISO() || combined : combined,
-            locationText: wm.location || '',
-            rawWatermarkText: wm.rawText || ''
-          };
-        } else if (!photoMeta.takenAt && effectiveGeminiKey) {
-          watermarkResult = await detectWatermarkTimestamp({
-            base64Data,
-            mimeType,
-            apiKey: effectiveGeminiKey,
-            model: dbUser?.model_name
-          });
+        const photoNotice = async (text: string) => {
+          const inlineButtons = [{ text: 'Pilih Kegiatan di Web', url: hostOrigin }];
+          if (initRes.message_id) await editTelegramMessage({ botToken, chatId, messageId: initRes.message_id, text, inlineButtons });
+          else await sendTelegramMessage({ botToken, chatId, text, inlineButtons });
+        };
+        let watermarkResult = parseWatermarkTimestamp(classificationResult?.watermarkData);
+        if (!photoMeta.takenAt && !watermarkResult.detected) {
+          watermarkResult = await detectWatermarkTimestamp({ base64Data, mimeType, apiKey: effectiveGeminiKey,
+            model: dbUser?.model_name || botAdmin?.model_name });
         }
-
-        const effectiveTakenAt = photoMeta.takenAt || watermarkResult?.detectedDateTime || new Date().toISOString();
+        const effectiveTakenAt = resolvePhotoTimestamp(photoMeta, watermarkResult);
+        if (!effectiveTakenAt) {
+          await photoNotice('Waktu pengambilan foto belum dapat dibaca dari EXIF atau watermark. Foto belum diunggah agar tidak masuk ke kegiatan yang salah. Buka menu Foto Dokumentasi di web, unggah foto dan pilih kegiatan yang benar secara manual.');
+          return { ok: true };
+        }
         const matchResult = matchPhotoToUserEvents({
           photoTimeIso: effectiveTakenAt,
           events: recentEvents,
           locationHint: watermarkResult?.locationText
         });
 
-        const targetUserId = String(userAuth?.userId || dbUser?.id || `tg_${userId}`);
-        let matchedEvent = matchResult.bestMatch;
-        let isAutoCreatedFolder = false;
-
-        if (!matchedEvent) {
-          // If no calendar event matched, auto-create a documentation folder for this activity in Google Drive
-          isAutoCreatedFolder = true;
-          const locName = watermarkResult?.locationText ? watermarkResult.locationText.substring(0, 50) : 'Dokumentasi Lapangan';
-          matchedEvent = {
-            id: `doc_${Date.now()}`,
-            title: `Dokumentasi: ${locName}`,
-            start_time: effectiveTakenAt,
-            user_id: targetUserId
-          } as any;
+        if (matchResult.ambiguous) {
+          await photoNotice('Ada beberapa kegiatan pada waktu foto yang sama. Foto belum diunggah. Pilih kegiatan yang benar melalui menu Foto Dokumentasi di web.');
+          return { ok: true };
         }
-
+        const targetUserId = String(userAuth?.userId || dbUser?.id || `tg_${userId}`);
+        const matchedEvent = matchResult.bestMatch;
+        if (!matchedEvent) {
+          const takenAt = DateTime.fromISO(effectiveTakenAt).setZone('Asia/Jakarta').toFormat('dd LLL yyyy, HH:mm');
+          await photoNotice(`Tidak ditemukan kegiatan dalam rentang waktu foto (${takenAt} WIB). Foto belum diunggah. Pilih kegiatan yang benar melalui menu Foto Dokumentasi di web.`);
+          return { ok: true };
+        }
         const uploadRes = await uploadDocumentationPhotoToDrive({
           userId: targetUserId,
           event: matchedEvent!,
@@ -885,7 +879,7 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
         }
 
         // If a new folder was created for this event, persist folder ID to event record if event exists in DB
-        if (uploadRes.folderId && matchedEvent!.id && !matchedEvent!.id.startsWith('doc_') && !matchedEvent!.gdrive_folder_id) {
+        if (uploadRes.folderId && matchedEvent!.id && !matchedEvent!.gdrive_folder_id) {
           await updateEventGdriveFolder({
             eventId: matchedEvent!.id,
             folderId: uploadRes.folderId,
@@ -903,28 +897,20 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
           file_size: buffer.length,
           mime_type: mimeType,
           taken_at: effectiveTakenAt,
-          match_method: photoMeta.takenAt ? 'exif_timestamp' : (watermarkResult?.detectedDateTime ? 'ocr_watermark' : 'fallback_today')
+          match_method: photoMeta.takenAt ? 'exif_timestamp' : 'ocr_watermark'
         });
 
         const startDt = DateTime.fromISO(matchedEvent!.start_time).setZone('Asia/Jakarta');
         const startFormatted = startDt.isValid ? startDt.toFormat('dd LLLL yyyy, HH:mm') : matchedEvent!.start_time;
 
-        let successText = '';
-        if (isAutoCreatedFolder) {
-          successText = `📸 *FOTO DOKUMENTASI BERHASIL DIARSIPKAN!* ✅\n\n` +
-            `📍 *Lokasi*: ${watermarkResult?.locationText || 'Dokumentasi Lapangan'}\n` +
-            `🕒 *Waktu Foto*: ${startFormatted} WIB\n` +
-            `💡 *Keterangan*: _Foto terdeteksi sebagai dokumentasi kegiatan fisik. Berkas otomatis diarsipkan ke folder Google Drive tanpa membuat agenda kalender baru!_\n` +
-            `📁 *Folder Google Drive*: [Buka Folder Dokumentasi](${uploadRes.folderUrl || 'https://drive.google.com'})\n\n` +
-            `✨ _Foto tersimpan rapi dan aman di Google Drive!_`;
-        } else {
-          successText = `📸 *FOTO DOKUMENTASI BERHASIL DIARSIPKAN!* ✅\n\n` +
+        const successText = `📸 *FOTO DOKUMENTASI BERHASIL DIARSIPKAN!* ✅\n\n` +
             `📌 *Kegiatan*: ${matchedEvent!.title}\n` +
             `🕒 *Waktu Acara*: ${startFormatted} WIB\n` +
+            `*Waktu Foto*: ${DateTime.fromISO(effectiveTakenAt).setZone('Asia/Jakarta').toFormat('dd LLL yyyy, HH:mm')} WIB\n` +
+            `*Sumber Waktu*: ${photoMeta.takenAt ? 'EXIF kamera' : 'Watermark kamera'}\n` +
             `💡 *Pencocokan*: _${matchResult.matchReason}_\n` +
             `📁 *Folder Google Drive*: [Buka Folder Kegiatan](${uploadRes.folderUrl || matchedEvent!.gdrive_folder_url || 'https://drive.google.com'})\n\n` +
             `✨ _Foto otomatis disimpan ke folder kegiatan tanpa membuat agenda kalender baru!_`;
-        }
 
         const inlineButtons = [
           { text: '📁 Buka Folder Drive', url: uploadRes.folderUrl || matchedEvent!.gdrive_folder_url || 'https://drive.google.com' },
@@ -948,7 +934,7 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
         mimeType
       });
 
-      if (progressTracker) progressTracker.stop();
+      if (progressTracker) await progressTracker.stop();
 
       if (!result.success || !result.event) {
         const errMsg = result.error || 'Poster tidak dapat dibaca oleh AI.';
@@ -1002,7 +988,7 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
         }
       });
     } catch (err: any) {
-      if (progressTracker) progressTracker.stop();
+      if (progressTracker) await progressTracker.stop();
       if (initRes.message_id) {
         await editTelegramMessage({
           botToken,
@@ -1050,7 +1036,7 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
         text
       });
 
-      if (progressTracker) progressTracker.stop();
+      if (progressTracker) await progressTracker.stop();
 
       if (!result.success || !result.event) {
         const errMsg = result.error || 'Teks tidak memuat informasi agenda.';
@@ -1092,7 +1078,7 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
         }
       });
     } catch (err: any) {
-      if (progressTracker) progressTracker.stop();
+      if (progressTracker) await progressTracker.stop();
       if (initRes.message_id) {
         await editTelegramMessage({
           botToken,
@@ -1236,6 +1222,11 @@ async function processAndDispatchEvent(params: {
 }) {
   const { botToken, chatId, userId, event, hostOrigin, userAuth, dbUser, progressMessageId, sourceType, fileName, fileData } = params;
 
+  const finishUpdateNotice = async (text: string) => {
+    if (progressMessageId && await editTelegramMessage({ botToken, chatId, messageId: progressMessageId, text })) return;
+    await sendTelegramMessage({ botToken, chatId, text });
+  };
+
   // 1. Cross-modality Duplicate Detection Check
   try {
     const candidateUserIds = [
@@ -1262,9 +1253,9 @@ async function processAndDispatchEvent(params: {
         }
         if (!matched) throw new Error('Kegiatan lama belum dapat ditentukan secara pasti. Ketik /agenda lalu /update <nomor> <waktu/tempat baru>.');
         const result = await updateExistingEvent({ owner, eventId: matched.id, expectedVersion: version, update: event.update, calendarId: dbUser?.calendar_id });
-        await sendTelegramMessage({ botToken, chatId, text: result.message + '\n\n' + result.event.title + '\nWaktu: ' + DateTime.fromISO(result.event.start_time).setZone('Asia/Jakarta').toFormat('dd LLL yyyy HH:mm') + ' WIB\nTempat: ' + (result.event.location || '') });
+        await finishUpdateNotice(result.message + '\n\n' + result.event.title + '\nWaktu: ' + DateTime.fromISO(result.event.start_time).setZone('Asia/Jakarta').toFormat('dd LLL yyyy HH:mm') + ' WIB\nTempat: ' + (result.event.location || ''));
       } catch (error) {
-        await sendTelegramMessage({ botToken, chatId, text: error instanceof Error ? error.message : 'Perubahan belum dapat diproses.' });
+        await finishUpdateNotice(error instanceof Error ? error.message : 'Perubahan belum dapat diproses.');
       }
       return;
     }
@@ -1290,7 +1281,7 @@ async function processAndDispatchEvent(params: {
   } catch (err) {
     console.error('Error during duplicate check in Telegram:', err);
     if (event.update || params.forceUpdate) {
-      await sendTelegramMessage({ botToken, chatId, text: 'Riwayat kegiatan belum dapat dibaca. Coba kirim perubahan lagi.' });
+      await finishUpdateNotice('Riwayat kegiatan belum dapat dibaca. Coba kirim perubahan lagi.');
       return;
     }
   }

@@ -7,7 +7,7 @@ try {
 
 import { DateTime } from 'luxon';
 import { ExtractedEventRecord } from './db';
-import { normalizeModelName } from './gemini';
+import { normalizeModelName, parseGeminiJson } from './gemini';
 
 export interface PhotoMetadata {
   takenAt?: string; // ISO 8601 with timezone (e.g. 2026-09-10T10:15:22+07:00)
@@ -24,6 +24,7 @@ export interface PhotoMetadata {
 
 export interface PhotoMatchResult {
   bestMatch: ExtractedEventRecord | null;
+  ambiguous: boolean;
   confidence: number; // 0.0 - 1.0
   matchReason: string;
   candidates: Array<{
@@ -123,25 +124,39 @@ export async function extractPhotoMetadata(buffer: Buffer): Promise<PhotoMetadat
   }
 }
 
-/**
- * Fallback: Uses Google Gemini Vision to read visual watermark/timestamp burned into the photo
- * (e.g., from Timestamp Camera or GPS Map Camera apps used widely by civil servants)
- */
+/** Validate watermark fields before using them as capture time. Never invent a missing clock. */
+export function parseWatermarkTimestamp(raw: unknown): WatermarkDetectionResult {
+  if (!raw || typeof raw !== 'object') return { detected: false };
+  const data = raw as Record<string, unknown>;
+  if (data.detected !== true || typeof data.date !== 'string' || typeof data.time !== 'string'
+    || !/^\d{4}-\d{2}-\d{2}$/.test(data.date) || !/^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(data.time)) return { detected: false };
+  const zone = typeof data.timezone === 'string' ? data.timezone : '+07:00';
+  if (!/^[+-](?:0\d|1[0-4]):[0-5]\d$/.test(zone)) return { detected: false };
+  const date = DateTime.fromISO(data.date);
+  const timestamp = DateTime.fromISO(`${data.date}T${data.time}${zone}`, { setZone: true });
+  if (!date.isValid || !timestamp.isValid) return { detected: false };
+  return { detected: true, detectedDateTime: timestamp.toISO()!,
+    locationText: typeof data.location === 'string' ? data.location : '',
+    rawWatermarkText: typeof data.rawText === 'string' ? data.rawText : '' };
+}
+
+/** Capture time must come from evidence, never from the upload clock. */
+export function resolvePhotoTimestamp(metadata: PhotoMetadata, watermark: WatermarkDetectionResult | null): string | null {
+  for (const time of [metadata.takenAt, watermark?.detected ? watermark.detectedDateTime : undefined]) {
+    if (time && DateTime.fromISO(time).isValid) return time;
+  }
+  return null;
+}
+
+/** Read camera watermark text with model fallback when EXIF is missing. */
 export async function detectWatermarkTimestamp(params: {
-  base64Data: string;
-  mimeType?: string;
-  apiKey: string;
-  model?: string;
+  base64Data: string; mimeType?: string; apiKey: string; model?: string;
 }): Promise<WatermarkDetectionResult> {
   const apiKey = (params.apiKey || process.env.GEMINI_API_KEY || '').replace(/^["']|["']$/g, '').trim();
-  if (!apiKey) {
-    return { detected: false };
-  }
-
-  const model = normalizeModelName(params.model || 'gemini-2.0-flash');
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-
+  if (!apiKey) return { detected: false };
+  const models = [...new Set([normalizeModelName(params.model), 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'])];
   const promptText = `Periksa foto dokumentasi ini dengan teliti, khususnya pada sudut-sudut foto (kiri bawah, kanan bawah, atau atas) untuk mencari teks stempel visual (*timestamp / watermark* dari aplikasi GPS Map Camera, Timestamp Camera, atau penanda waktu lainnya).
+Jangan menebak tanggal atau jam, jangan memakai waktu saat ini, dan jangan memakai waktu pada layar rapat sebagai waktu pengambilan. Baca tanggal dengan nama bulan Indonesia dan jam pada stempel kamera, lalu konversi ke YYYY-MM-DD dan HH:mm:ss. Jika tanggal atau jam tidak terbaca lengkap, kembalikan detected: false.
 Jika terdapat tanggal, jam (WIB/WITA/WIT), atau alamat/lokasi koordinat yang tercetak di foto, ekstrak ke format JSON murni:
 {
   "detected": true,
@@ -156,55 +171,28 @@ Jika TIDAK ADA stempel tanggal/jam yang tercetak di foto, kembalikan:
 {
   "detected": false
 }`;
-
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              {
-                inlineData: {
-                  mimeType: params.mimeType || 'image/jpeg',
-                  data: params.base64Data
-                }
-              },
-              { text: promptText }
-            ]
-          }
-        ],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.1
-        }
-      })
-    });
-
-    if (!res.ok) return { detected: false };
-    const data = await res.json();
-    const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!candidateText) return { detected: false };
-
-    const parsed = JSON.parse(candidateText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim());
-    if (parsed.detected && parsed.date) {
-      const timePart = parsed.time || '10:00:00';
-      const tzPart = parsed.timezone || '+07:00';
-      const combined = `${parsed.date}T${timePart}${tzPart}`;
-      const dt = DateTime.fromISO(combined);
-
-      return {
-        detected: true,
-        detectedDateTime: dt.isValid ? dt.toISO() || combined : combined,
-        locationText: parsed.location || '',
-        rawWatermarkText: parsed.rawText || ''
-      };
+  for (const model of models) {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(8000),
+        body: JSON.stringify({ contents: [{ parts: [
+          { inlineData: { mimeType: params.mimeType || 'image/jpeg', data: params.base64Data } }, { text: promptText }
+        ] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.1 } })
+      });
+      if (!res.ok) {
+        console.warn(`Watermark OCR failed with model ${model}: HTTP ${res.status}`);
+        if ([404, 429, 503].includes(res.status)) continue;
+        return { detected: false };
+      }
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) continue;
+      const result = parseWatermarkTimestamp(parseGeminiJson(text));
+      if (result.detected) return result;
+    } catch {
+      console.warn(`Watermark OCR response unavailable or invalid with model ${model}`);
     }
-  } catch (err) {
-    console.warn('Gemini watermark detection failed:', err);
   }
-
   return { detected: false };
 }
 
@@ -371,6 +359,7 @@ export function matchPhotoToUserEvents(params: {
   if (!photoDt.isValid || events.length === 0) {
     return {
       bestMatch: null,
+      ambiguous: false,
       confidence: 0,
       matchReason: 'Waktu foto tidak valid atau belum ada riwayat agenda yang terdaftar.',
       candidates: []
@@ -446,12 +435,15 @@ export function matchPhotoToUserEvents(params: {
   // Sort candidates by score descending
   candidates.sort((a, b) => b.score - a.score);
 
-  const bestMatch = candidates.length > 0 && candidates[0].score >= 0.65 ? candidates[0].event : null;
+  const highCandidates = candidates.filter(candidate => candidate.score >= 0.85);
+  const ambiguous = highCandidates.length > 1;
+  const bestMatch = highCandidates.length === 1 ? highCandidates[0].event : null;
   const bestScore = candidates.length > 0 ? candidates[0].score : 0;
   const matchReason = candidates.length > 0 ? candidates[0].reason : 'Tidak ditemukan agenda pada tanggal/waktu foto ini.';
 
   return {
     bestMatch,
+    ambiguous,
     confidence: bestScore,
     matchReason,
     candidates

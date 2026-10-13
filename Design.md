@@ -144,6 +144,12 @@ Ruang kerja khusus untuk pengunggahan dan auto-filing foto dokumentasi fisik keg
 
 ---
 
+### 4.7 Waktu Foto Tidak Terbaca & Hasil Pengarsipan
+
+- Tanpa EXIF/watermark tanggal dan jam yang valid, web menampilkan pemilihan kegiatan manual. Setelah unggahan berhasil, label waktu foto menyebut **Tidak terbaca (kegiatan dipilih manual)**, bukan waktu unggah.
+- Telegram menampilkan pemberitahuan foto belum diunggah serta tombol **Pilih Kegiatan di Web** jika waktu tidak terbaca, kegiatan tidak cocok dalam rentang toleransi, atau kandidat ambigu.
+- Balasan foto yang berhasil menampilkan kegiatan, waktu acara, waktu foto, sumber EXIF/watermark, alasan pencocokan, dan tautan folder. Setiap foto dalam album diproses sendiri sehingga jumlah balasan mengikuti jumlah foto.
+
 ## 5. Responsive Design & Breakpoints
 
 | Breakpoint | Penyesuaian Tata Letak |
@@ -165,6 +171,7 @@ Ruang kerja khusus untuk pengunggahan dan auto-filing foto dokumentasi fisik keg
 
 - Panduan bot menjelaskan pengiriman surat perubahan atau pemilihan kegiatan lewat `/agenda` dan `/update 1 jam menjadi 13.00` / `/update 1 tempat menjadi Ruang B`. Nomor mengikuti daftar terakhir dan berlaku 15 menit.
 - Pembaruan berhasil menampilkan judul, waktu mulai dalam WIB, tempat, dan hasil sinkronisasi. Jika kegiatan ambigu atau versi daftar sudah berubah, bot meminta pengguna memuat daftar dan memilih kembali.
+- Hasil update mengganti pesan progress awal, termasuk ketika pemilihan atau pembaruan gagal. Animasi ditutup sebelum hasil ditampilkan sehingga pesan 93% tidak tertinggal pada alur normal. Jika Telegram menolak edit, hasil tampil sebagai pesan baru.
 - Jika jadwal tersimpan di EasyCal tetapi Google Calendar belum diperbarui, pesan membedakan kedua status tersebut dan memberikan langkah `/agenda` lalu `sinkron <nomor>`.
 - Pada `/connect`, akun yang masih terhubung tetap memperoleh tombol **Hubungkan Ulang Google** serta **Buka Pengaturan Web**. Kegagalan invalid_grant mengarahkan pengguna login ulang dengan akun yang sama lalu mengirim ulang berkas.
 - Pembaruan surat/pesan ini adalah interaksi Telegram; tidak ada formulir pembaruan jadwal baru pada web. Folder dokumentasi dan identitas event kalender dipertahankan.

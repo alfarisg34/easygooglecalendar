@@ -287,8 +287,7 @@ export interface PhotoMatchResult {
   matchReason: string;
   candidates: Array<{
     event: ExtractedEventRecord;
-    confidence: number;
-    timeDifferenceHours: number;
+    score: number;
     reason: string;
   }>;
   ambiguous: boolean;
@@ -296,6 +295,10 @@ export interface PhotoMatchResult {
 ```
 
 ---
+
+Hasil pencocokan memiliki bestMatch hanya jika ada satu kandidat dalam toleransi waktu (score minimal 0,85). Beberapa kandidat tersebut menghasilkan ambiguous: true dan bestMatch: null. Kandidat bertanggal sama di luar toleransi (score 0,65) tetap disediakan sebagai saran.
+
+Respons POST /api/documentation dapat menyertakan timeMissing: true dan noMatchFound: true jika bukti waktu tidak ada, beserta availableEvents untuk pilihan manual. Respons berhasil menyertakan captureTime (ISO 8601 atau null). Pada unggahan manual tanpa bukti waktu, event_documentations.taken_at tetap NULL/undefined; created_at menyimpan waktu pencatatan unggahan. effectiveTakenAt tetap tersedia untuk kompatibilitas penamaan berkas, tetapi tidak dipakai untuk memilih kegiatan otomatis atau ditampilkan sebagai waktu pengambilan jika captureTime null. Tidak ada kolom baru atau migrasi untuk perubahan ini.
 
 ## 5. Storage Fallback Mechanism (Offline / Local Dev)
 

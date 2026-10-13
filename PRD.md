@@ -113,6 +113,10 @@ EasyCal menyediakan solusi terintegrasi:
 
 ---
 
+* **FR-DOC-07 (Bukti Waktu Foto)**: Pencocokan otomatis hanya menggunakan tanggal dan jam yang valid dari EXIF atau watermark. Waktu unggah tidak boleh dipakai untuk menebak kegiatan. OCR watermark memakai model pilihan pengguna dan fallback; tanggal/jam yang tidak terbaca tidak diisi nilai default.
+* **FR-DOC-08 (Pemilihan Manual)**: Tanpa waktu foto, tanpa kandidat dalam toleransi start - 1 jam sampai end + 2 jam, atau dengan beberapa kandidat, pengguna memilih kegiatan lewat menu Foto Dokumentasi di web. Bot tidak mengunggah ke folder kegiatan atau membuat folder terpisah sebelum kegiatan diketahui. Kesamaan tanggal saja tidak cukup untuk auto-filing.
+* **FR-DOC-09 (Transparansi Waktu)**: Telegram menampilkan waktu foto dan sumber EXIF/watermark pada hasil unggahan. Web menampilkan waktu tidak terbaca untuk pilihan manual tanpa bukti waktu; metadata taken_at tetap kosong. Album diproses per foto dan caption poster diprioritaskan.
+
 ### 3.9 Pembaruan Kegiatan & Pemulihan Otorisasi Google
 
 * **FR-UPD-01 (Surat/Pesan Perubahan Telegram)**: Bot membaca waktu/tempat baru dari surat perubahan, ralat, atau narasi semula menjadi. Perubahan diproses sebelum penolakan duplikat dan tidak membuat event kalender baru.
@@ -120,6 +124,7 @@ EasyCal menyediakan solusi terintegrasi:
 * **FR-UPD-03 (Perubahan Parsial)**: Perubahan jam saja mempertahankan tanggal dan durasi sebelumnya jika jam akhir baru tidak disebutkan. Perubahan tempat saja mempertahankan waktu. Nilai lama pada bagian semula tidak dipakai sebagai jadwal baru; tanggal/jam yang tidak valid ditolak.
 * **FR-UPD-04 (Identitas & Retry)**: Pembaruan mempertahankan identitas event Calendar dan folder dokumentasi. Jadwal yang diinginkan disimpan di EasyCal sebelum sinkronisasi. Kegagalan Google dilaporkan dan dapat dicoba ulang lewat daftar `/agenda` terbaru lalu `sinkron <nomor>`.
 * **FR-UPD-05 (Batas Implementasi)**: Pembaruan dari surat/pesan tersedia melalui Telegram. Kegiatan yang dibatalkan harus diaktifkan kembali; sinkronisasi sebelumnya yang gagal harus diselesaikan terlebih dahulu. Event dengan peserta undangan atau yang dihapus di Google Calendar memerlukan penanganan di Google Calendar. Surat revisi tidak otomatis diunggah sebagai arsip tambahan, dan nama folder lama tidak diubah.
+* **FR-UPD-06 (Penutupan Progress Telegram)**: Hasil pembaruan berhasil maupun gagal mengganti pesan progress awal. Animasi berhenti sebelum hasil ditampilkan. Jika edit pesan ditolak, hasil dikirim sebagai pesan baru; persentase animasi tidak boleh dianggap status sinkronisasi kalender setelah balasan akhir diterima.
 * **FR-AUTH-05 (Pemulihan invalid_grant)**: Kesalahan otorisasi Google menampilkan petunjuk login ulang dengan akun yang sama. `/connect` tetap menyediakan tombol Hubungkan Ulang Google untuk akun yang tercatat terhubung. Token dibaca dari database sebelum cache; pengguna mengirim ulang foto setelah otorisasi berhasil.
 
 ---
