@@ -90,7 +90,8 @@ export async function claimEventChange(owner: EventOwner, event: ExtractedEventR
 export async function saveLifecycleState(event: ExtractedEventRecord): Promise<void> {
   const sql = await database();
   if (sql) {
-    const rows = await sql`UPDATE extracted_events SET lifecycle_sync = ${event.lifecycle_sync || 'synced'},
+    const rows = await sql`UPDATE extracted_events SET start_time = ${event.start_time}, end_time = ${event.end_time},
+      location = ${event.location || ''}, lifecycle_sync = ${event.lifecycle_sync || 'synced'},
       lifecycle_error = ${event.lifecycle_error || null}, calendar_backup = ${JSON.stringify(event.calendar_backup || null)}::jsonb,
       google_event_id = ${event.google_event_id || ''}, google_calendar_id = ${event.google_calendar_id || ''}
       WHERE id = ${event.id} AND lifecycle_version = ${event.lifecycle_version || 0} RETURNING id`;

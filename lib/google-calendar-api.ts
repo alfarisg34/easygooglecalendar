@@ -1,3 +1,4 @@
+import { isInvalidGoogleGrant, GOOGLE_RECONNECT_MESSAGE } from './google-api-error';
 import { google } from 'googleapis';
 import { CalendarEvent } from './types';
 import { getGoogleOAuth2Client } from './google-auth';
@@ -96,7 +97,7 @@ export async function insertGoogleCalendarEvent(
   } catch (err: any) {
     return {
       success: false,
-      error: `Gagal menambahkan event ke Google Calendar: ${err.message}`
+      error: isInvalidGoogleGrant(err) ? GOOGLE_RECONNECT_MESSAGE : `Gagal menambahkan event ke Google Calendar: ${err.message}`
     };
   }
 }

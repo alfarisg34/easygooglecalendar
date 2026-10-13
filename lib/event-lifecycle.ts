@@ -1,3 +1,5 @@
+import { isInvalidGoogleGrant, GOOGLE_RECONNECT_MESSAGE } from './google-api-error';
+import { saveUserGoogleAuth } from './token-store';
 import { google, calendar_v3 } from 'googleapis';
 import { getGoogleOAuth2Client } from './google-auth';
 import { getUserGoogleAuth } from './token-store';
@@ -54,9 +56,13 @@ async function syncCalendar(owner: EventOwner, event: ExtractedEventRecord, fall
   const oauth = getGoogleOAuth2Client();
   oauth.setCredentials({ refresh_token: auth.refreshToken, access_token: auth.accessToken, expiry_date: auth.expiryDate });
   oauth.on('tokens', tokens => {
-    if (tokens.access_token) void updateUserGoogleTokens({ userId: owner.userId, accessToken: tokens.access_token,
+    if (tokens.access_token) {
+      void saveUserGoogleAuth({ ...auth, accessToken: tokens.access_token, refreshToken: tokens.refresh_token || auth.refreshToken,
+        expiryDate: tokens.expiry_date || auth.expiryDate, updatedAt: new Date().toISOString() }).catch(() => console.error('Could not cache OAuth token'));
+      void updateUserGoogleTokens({ userId: owner.userId, accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token || undefined, expiryDate: tokens.expiry_date || undefined })
       .catch(() => console.error('Could not persist refreshed lifecycle OAuth token'));
+    }
   });
   const calendar = google.calendar({ version: 'v3', auth: oauth });
   const identity = resolveCalendarIdentity(event, fallbackCalendar);
@@ -72,7 +78,11 @@ async function syncCalendar(owner: EventOwner, event: ExtractedEventRecord, fall
     await saveLifecycleState(event);
   }
   if (event.activity_status === 'active' && !event.calendar_backup) {
-    // A failed cancellation that never reached Google requires no restoration.
+    await calendar.events.patch({ ...args, requestBody: {
+      start: { dateTime: event.start_time, timeZone: 'Asia/Jakarta' },
+      end: { dateTime: event.end_time, timeZone: 'Asia/Jakarta' }, location: event.location || ''
+    }, sendUpdates: 'none' }, { timeout: 20000, retry: false,
+      ...(current.data.etag ? { headers: { 'If-Match': current.data.etag } } : {}) });
     return;
   }
   const backup = event.calendar_backup;
@@ -109,7 +119,7 @@ export async function changeEventLifecycle(params: {
   } catch (error) {
     const code = error && typeof error === 'object' && 'code' in error ? Number(error.code) : 0;
     claimed.lifecycle_sync = 'error';
-    claimed.lifecycle_error = code === 404 || code === 410 ? 'Kegiatan tidak ditemukan di Google Calendar. Pulihkan kegiatan di Google Calendar lalu coba lagi.'
+    claimed.lifecycle_error = isInvalidGoogleGrant(error) ? GOOGLE_RECONNECT_MESSAGE : code === 404 || code === 410 ? 'Kegiatan tidak ditemukan di Google Calendar. Pulihkan kegiatan di Google Calendar lalu coba lagi.'
       : code === 401 || code === 403 ? 'Akses kalender ditolak. Hubungkan ulang akun Google atau periksa izin kalender.'
       : code === 412 ? 'Kegiatan berubah di Google Calendar. Coba sinkronisasi lagi.'
       : error instanceof Error && !('config' in error) ? error.message : 'Google Calendar belum dapat diperbarui. Coba sinkronisasi lagi.';

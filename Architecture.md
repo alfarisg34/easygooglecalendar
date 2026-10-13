@@ -189,6 +189,17 @@ flowchart TB
 
 ---
 
+#### Pembaruan Kegiatan & Pemulihan Token
+
+* **`event-update.ts`**: Mencocokkan satu kegiatan aktif berdasarkan judul/tanggal semula atau menerima ID dan versi dari sesi daftar Telegram. Memvalidasi perubahan parsial, mempertahankan nilai yang tidak disebutkan, dan menyimpan jadwal yang diinginkan pada record yang sama.
+* **`event-lifecycle-store.ts`**: Memeriksa kepemilikan melalui ID akun/email/Telegram dan mengklaim versi secara atomik. Penyimpanan status sinkronisasi juga menyimpan `start_time`, `end_time`, dan `location`. Identitas Google dan folder dokumentasi tetap dipertahankan.
+* **`event-lifecycle.ts`**: Sinkronisasi kegiatan aktif tanpa cadangan pembatalan melakukan PATCH start/end/location ke event Google yang sama. ETag diperiksa dengan If-Match. Kegagalan tercatat agar perintah `sinkron` dapat mencoba kembali; event dengan peserta undangan atau status terhapus tidak diperbarui otomatis.
+* **`telegram-handler.ts`**: Meneruskan metadata `CalendarEvent.update` sebelum pemeriksaan duplikat. `/update <nomor>` menggunakan sesi daftar per bot/chat/pengguna/pemilik dengan masa berlaku 15 menit; ID dari sesi dapat dipilih meskipun tidak masuk 50 riwayat terbaru. Pilihan ambigu atau perubahan yang tidak terbaca tidak diteruskan ke inserksi agenda.
+* **`token-store.ts` & callback OAuth**: Database menjadi sumber utama token sebelum cache memori/KV/file. Login ulang menghapus alias cache akun terkait; callback menyimpan identitas Google dan refresh token efektif dari database.
+* **`google-api-error.ts`**: Mengenali `invalid_grant` melalui pesan atau respons OAuth dan menyediakan petunjuk reconnect bersama untuk Drive dan Calendar. Kesalahan ini tidak memicu fallback pembuatan folder Drive di root. Tombol reconnect tersedia pada `/connect` meskipun akun masih terhubung.
+
+Alur pembaruan: Telegram ? ekstraksi metadata perubahan ? pencocokan/pemilihan kegiatan ? validasi kepemilikan dan versi ? simpan jadwal pada record lama ? PATCH Calendar ? simpan hasil sinkronisasi. Alur ini tidak membuat folder baru, mengganti nama folder, atau mengunggah surat revisi sebagai berkas tambahan.
+
 ## 5. Detailed Sequence Diagrams
 
 ### 5.1 Web Multimodal Extraction & 0-Click Sync Flow

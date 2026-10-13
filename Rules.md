@@ -121,10 +121,23 @@ Proyek **EasyCal** mematuhi standar rekayasa perangkat lunak modern untuk aplika
 
 ## 10. Checklist Verifikasi Sebelum Commit & Deploy
 
+Pembaruan dokumentasi dan changelog pada bagian 11 wajib diselesaikan sebelum commit atau deploy.
+
 Sebelum mengajukan perubahan kode:
 1. Jalankan `npm run lint` untuk memastikan tidak ada kesalahan linter atau sintaks TypeScript.
 2. Jalankan `npm run build` untuk memverifikasi bahwa *type checking* lolos dan seluruh Route Handler dapat di-bundle tanpa error.
 3. Uji alur ekstraksi utama dengan contoh naskah surat dinas dan pastikan entitas tanggal, lokasi, serta nomor dinas terbaca akurat.
 4. Uji alur pengunggahan foto dokumentasi dan pastikan foto tersimpan di sub-folder Google Drive yang tepat tanpa menduplikasi agenda kalender.
 5. Verifikasi bahwa tidak ada file kredensial rahasia yang masuk ke dalam *staging area* Git.
+
+---
+
+## 11. Dokumentasi & Changelog Wajib pada Setiap Perubahan
+
+1. Setiap perubahan fitur, perbaikan, tampilan, konfigurasi, dependensi, pengujian, maupun dokumentasi wajib disertai pembaruan `CHANGELOG.md` pada pekerjaan yang sama.
+2. Tinjau dan perbarui semua dokumen yang terdampak, termasuk `README.md`, `PRD.md`, `Architecture.md`, `Schema.md`, `Design.md`, `Rules.md`, dan `AGENTS.md`. Pertahankan dokumen yang tidak terdampak tanpa perubahan tanggal kosmetik.
+3. Ikuti format changelog dan aturan rilis di [AGENTS.md](AGENTS.md): bagian `Unreleased`, kategori perubahan yang relevan, serta `Validation` berisi hasil pemeriksaan yang benar-benar dilakukan dan batas verifikasinya.
+4. Dokumentasi harus menggambarkan implementasi yang tersedia. Bedakan perilaku web dan Telegram, pengujian tiruan dan layanan nyata, serta perubahan lokal dan rilis yang sudah di-deploy.
+5. Jalankan pemeriksaan yang sesuai serta `git diff --check`. Jika pemeriksaan gagal atau belum dilakukan, catat secara eksplisit; jangan menyatakannya lulus.
+6. Selesaikan pembaruan ini sebelum pekerjaan dinyatakan selesai dan sebelum commit, push, atau deploy. Saat tindakan tersebut diizinkan pengguna, sertakan dokumentasi dan changelog bersama perubahan kode.
 

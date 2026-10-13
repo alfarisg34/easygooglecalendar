@@ -113,6 +113,17 @@ EasyCal menyediakan solusi terintegrasi:
 
 ---
 
+### 3.9 Pembaruan Kegiatan & Pemulihan Otorisasi Google
+
+* **FR-UPD-01 (Surat/Pesan Perubahan Telegram)**: Bot membaca waktu/tempat baru dari surat perubahan, ralat, atau narasi semula menjadi. Perubahan diproses sebelum penolakan duplikat dan tidak membuat event kalender baru.
+* **FR-UPD-02 (Pemilihan Kegiatan)**: Pembaruan otomatis hanya dilakukan jika satu kegiatan aktif cocok dengan judul ternormalisasi (Jaccard minimal 0,8; minimal dua kata kunci) dan tanggal semula jika tersedia, dalam 50 riwayat terbaru. Jika tidak ditemukan atau ambigu, pengguna memilih lewat `/agenda` lalu `/update <nomor> <perubahan>`; nomor berlaku 15 menit dan versi kegiatan diperiksa kembali.
+* **FR-UPD-03 (Perubahan Parsial)**: Perubahan jam saja mempertahankan tanggal dan durasi sebelumnya jika jam akhir baru tidak disebutkan. Perubahan tempat saja mempertahankan waktu. Nilai lama pada bagian semula tidak dipakai sebagai jadwal baru; tanggal/jam yang tidak valid ditolak.
+* **FR-UPD-04 (Identitas & Retry)**: Pembaruan mempertahankan identitas event Calendar dan folder dokumentasi. Jadwal yang diinginkan disimpan di EasyCal sebelum sinkronisasi. Kegagalan Google dilaporkan dan dapat dicoba ulang lewat daftar `/agenda` terbaru lalu `sinkron <nomor>`.
+* **FR-UPD-05 (Batas Implementasi)**: Pembaruan dari surat/pesan tersedia melalui Telegram. Kegiatan yang dibatalkan harus diaktifkan kembali; sinkronisasi sebelumnya yang gagal harus diselesaikan terlebih dahulu. Event dengan peserta undangan atau yang dihapus di Google Calendar memerlukan penanganan di Google Calendar. Surat revisi tidak otomatis diunggah sebagai arsip tambahan, dan nama folder lama tidak diubah.
+* **FR-AUTH-05 (Pemulihan invalid_grant)**: Kesalahan otorisasi Google menampilkan petunjuk login ulang dengan akun yang sama. `/connect` tetap menyediakan tombol Hubungkan Ulang Google untuk akun yang tercatat terhubung. Token dibaca dari database sebelum cache; pengguna mengirim ulang foto setelah otorisasi berhasil.
+
+---
+
 ## 4. Non-Functional Requirements (NFR)
 
 ### 4.1 Performance & Latency

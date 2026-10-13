@@ -2,6 +2,8 @@ import { CalendarEvent, ExtractionRequest, ExtractionResponse } from './types';
 import { buildGoogleCalendarUrl } from './calendar-builder';
 import { callCustomOcrService } from './ocr-service';
 
+const EVENT_UPDATE_INSTRUCTIONS = "ATURAN SURAT/PESAN PERUBAHAN: Jika ada narasi semula menjadi, revisi, ralat, penjadwalan ulang, perubahan waktu/tempat, atau perintah /update, tambahkan properti \"update\". Jangan membuat kegiatan baru. Gunakan HANYA nilai BARU pada update, bukan nilai semula. Format update: {\"original_date\":\"YYYY-MM-DD (tanggal semula jika tertulis)\",\"date\":\"YYYY-MM-DD (tanggal baru jika tertulis)\",\"start_clock\":\"HH:mm (jam mulai baru)\",\"end_clock\":\"HH:mm (jam akhir baru)\",\"location\":\"tempat baru\"}. Hilangkan setiap properti yang tidak disebutkan; jangan menebak tanggal/jam/tempat pada update. Untuk jam baru s.d. selesai, end_clock adalah 2 jam setelah start_clock. Judul harus nama kegiatan asli, tanpa awalan perubahan/ralat/penjadwalan ulang. Pesan yang hanya menyebut jam/tempat baru tetap merupakan update jika ada /update. Undangan biasa tidak memiliki properti update.";
+
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 /**
@@ -143,6 +145,9 @@ export async function extractEventFromSource(request: ExtractionRequest): Promis
 
 Waktu Referensi Saat Ini: ${nowISO}
 
+${EVENT_UPDATE_INSTRUCTIONS}
+
+
 ${request.sourceType === 'image' ? `PERINGATAN PENTING KHUSUS GAMBAR:
 Jika berkas gambar ini BUKAN poster/flyer pengumuman/undangan kegiatan (misalnya berupa foto dunia nyata seperti selfie/wefie, foto suasana orang rapat di ruangan/meja pertemuan, atau foto dokumentasi berkamera dengan stempel TimeMark / GPS Map Camera / Timestamp Camera), JANGAN memaksakan membuat agenda baru dari teks stempel tanggal dan alamat jalan tersebut.
 Kembalikan HANYA JSON murni:
@@ -221,6 +226,9 @@ async function extractFromTextContent(params: {
   const promptText = `Analisis pesan chat undangan dinas / pengumuman kegiatan / hasil OCR dokumen bahasa Indonesia berikut dan ekstrak seluruh informasi kegiatan ke dalam format JSON murni:
 
 Waktu Referensi Saat Ini: ${nowISO}
+
+${EVENT_UPDATE_INSTRUCTIONS}
+
 
 Teks Dokumen / Undangan:
 """
@@ -351,6 +359,7 @@ async function callGeminiGenerateContent(params: {
         };
       }
       const event = normalizeCalendarEvent(parsedJson);
+      if (parsedJson.update && typeof parsedJson.update === 'object' && !Array.isArray(parsedJson.update)) event.update = parsedJson.update;
 
       return {
         success: true,

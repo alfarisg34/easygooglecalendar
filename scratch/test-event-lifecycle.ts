@@ -31,6 +31,7 @@ let patches = 0;
 let failure = 0;
 const oauth = { setCredentials: () => {}, on: () => {} };
 const service = load<typeof import('../lib/event-lifecycle')>('lib/event-lifecycle.ts', {
+  './google-api-error': load('lib/google-api-error.ts', {}),
   './db': { updateUserGoogleTokens: async () => {} }, './event-lifecycle-store': store,
   './google-auth': { getGoogleOAuth2Client: () => oauth }, './token-store': { getUserGoogleAuth: async () => ({ refreshToken: 'test' }) },
   googleapis: { google: { calendar: () => ({ events: {
@@ -45,6 +46,12 @@ const service = load<typeof import('../lib/event-lifecycle')>('lib/event-lifecyc
   } }) } }
 });
 const change = (action: 'cancel' | 'restore' | 'retry', version: number, eventId = 'one') => service.changeEventLifecycle({ owner, eventId, action, expectedVersion: version, reason: 'Penyelenggara membatalkan', channel: 'web' });
+
+
+const updateService = load<typeof import('../lib/event-update')>('lib/event-update.ts', {
+  './event-lifecycle-store': store, './event-lifecycle': service,
+  './duplicate-detector': load('lib/duplicate-detector.ts', {})
+});
 
 async function main() {
   reset();
@@ -142,6 +149,43 @@ async function main() {
   calendarEvent = { summary: 'Default reminders', description: '', reminders: { useDefault: true }, status: 'confirmed' };
   await change('cancel', 0); await change('restore', 1);
   assert.equal(calendarEvent.reminders?.useDefault, true);
+
+  reset();
+  calendarEvent = { summary: 'Rapat A', status: 'confirmed', etag: 'v1' };
+  const originalEvent = fixture();
+  const moved = updateService.mergeEventUpdate(originalEvent, { start_clock: '13:00' });
+  assert.equal(moved.start_time, '2099-10-08T13:00:00.000+07:00');
+  assert.equal(moved.end_time, '2099-10-08T15:00:00.000+07:00');
+  assert.equal(moved.gdrive_folder_id, 'keep-folder');
+  const venue = updateService.mergeEventUpdate(originalEvent, { location: 'Ruang B' });
+  assert.equal(Date.parse(venue.start_time), Date.parse(originalEvent.start_time));
+  assert.equal(venue.location, 'Ruang B');
+  const rescheduled = updateService.mergeEventUpdate(originalEvent, { date: '2099-10-15', start_clock: '14:00', end_clock: '16:00' });
+  assert.equal(rescheduled.start_time, '2099-10-15T14:00:00.000+07:00');
+  assert.throws(() => updateService.mergeEventUpdate(originalEvent, { start_clock: '25:00' }));
+  assert.throws(() => updateService.mergeEventUpdate(originalEvent, { date: '2099-02-30' }));
+  assert.throws(() => updateService.mergeEventUpdate(originalEvent, {}));
+  const query = { title: 'Rapat Koordinasi Data Ketenagakerjaan', update: { original_date: '2099-10-08' } } as import('../lib/types').CalendarEvent;
+  const candidate = { ...fixture(), title: query.title };
+  assert.equal(updateService.matchUpdateEvent(query, [candidate])?.id, 'one');
+  assert.equal(updateService.matchUpdateEvent(query, [candidate, { ...candidate, id: 'two' }]), undefined);
+  const changed = await updateService.updateExistingEvent({ owner, eventId: 'one', expectedVersion: 0, update: { start_clock: '13:00', location: 'Ruang B' } });
+  assert.equal(changed.event.lifecycle_sync, 'synced');
+  assert.equal(calendarEvent.start?.dateTime, changed.event.start_time);
+  assert.equal(calendarEvent.location, 'Ruang B');
+  assert.equal(changed.event.google_event_id, 'event-a');
+  assert.equal(changed.event.gdrive_folder_id, 'keep-folder');
+  assert.equal(JSON.parse(files.get(eventsPath)!).length, 1);
+  reset(); failure = 503;
+  const failedUpdate = await updateService.updateExistingEvent({ owner, eventId: 'one', expectedVersion: 0, update: { location: 'Ruang C' } });
+  assert.equal(failedUpdate.event.lifecycle_sync, 'error');
+  failure = 0;
+  const recoveredUpdate = await change('retry', failedUpdate.event.lifecycle_version!);
+  assert.equal(recoveredUpdate.event.lifecycle_sync, 'synced');
+  assert.equal(calendarEvent.location, 'Ruang C');
+  assert.equal(updateService.matchUpdateEvent(query, [{ ...candidate, activity_status: 'cancelled' }]), undefined);
+  console.log('PASS: schedule/venue changes, partial fields, date validation, ambiguous matching, existing Calendar/Drive identity, and failed update retry');
+
   console.log('PASS: lifecycle, restoration, retries, ownership, concurrency, legacy identity, Telegram numbered selection/confirmation, and cancelled photo exclusion');
 }
 

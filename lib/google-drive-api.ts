@@ -1,3 +1,4 @@
+import { isInvalidGoogleGrant, GOOGLE_RECONNECT_MESSAGE } from './google-api-error';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
 import { CalendarEvent } from './types';
@@ -119,7 +120,7 @@ export async function createDriveFolder(params: {
         supportsAllDrives: true
       });
     } catch (parentErr: any) {
-      if (parentErr.message?.includes('insufficient') || parentErr.message?.includes('scope')) {
+      if (isInvalidGoogleGrant(parentErr) || !parentId || parentErr.message?.includes('insufficient') || parentErr.message?.includes('scope')) {
         throw parentErr;
       }
       // If creating inside specified parent folder failed (e.g. parent folder deleted or unshared),
@@ -142,11 +143,12 @@ export async function createDriveFolder(params: {
       folderUrl
     };
   } catch (err: any) {
-    console.error('Failed to create Google Drive folder:', err);
+    console.error('Failed to create Google Drive folder:', err.message);
     let errorMsg = `Gagal membuat folder Google Drive: ${err.message}`;
     if (err.message?.includes('insufficient') || err.message?.includes('scope') || err.status === 403) {
       errorMsg = 'Izin Google Drive belum disetujui pada akun Google Anda. Silakan lakukan Login Ulang dengan Google untuk menyetujui izin akses Google Drive.';
     }
+    if (isInvalidGoogleGrant(err)) errorMsg = GOOGLE_RECONNECT_MESSAGE;
     return {
       success: false,
       error: errorMsg
@@ -195,11 +197,12 @@ export async function uploadFileToDrive(params: {
       fileUrl
     };
   } catch (err: any) {
-    console.error('Failed to upload file to Google Drive:', err);
+    console.error('Failed to upload file to Google Drive:', err.message);
     let errorMsg = `Gagal mengunggah berkas ke Google Drive: ${err.message}`;
     if (err.message?.includes('insufficient') || err.message?.includes('scope') || err.status === 403) {
       errorMsg = 'Izin Google Drive belum disetujui pada akun Google Anda. Silakan lakukan Login Ulang dengan Google untuk menyetujui izin akses Google Drive.';
     }
+    if (isInvalidGoogleGrant(err)) errorMsg = GOOGLE_RECONNECT_MESSAGE;
     return {
       success: false,
       error: errorMsg

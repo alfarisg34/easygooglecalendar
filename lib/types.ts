@@ -1,4 +1,5 @@
 export interface CalendarEvent {
+  update?: EventUpdate;
   activity_status?: 'active' | 'cancelled';
   title: string;
   start_time: string; // ISO 8601 (e.g. 2026-09-03T09:00:00+07:00)
@@ -11,6 +12,14 @@ export interface CalendarEvent {
   speakers: string;
   description: string;
   google_calendar_url?: string;
+}
+
+export interface EventUpdate {
+  original_date?: string;
+  date?: string;
+  start_clock?: string;
+  end_clock?: string;
+  location?: string;
 }
 
 export type ExtractionEngine = 'gemini' | 'ocr_service' | 'hybrid';

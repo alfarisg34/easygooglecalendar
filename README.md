@@ -1,5 +1,8 @@
 # 📅 EasyCal // Serverless OCR & Gemini Calendar Studio
 
+Versi rilis: **1.1.0**. Lihat [catatan rilis](CHANGELOG.md) untuk perubahan dan batas verifikasi.
+
+
 Layanan publik **Serverless OCR & Multimodal AI** untuk mengekstrak dokumen surat dinas (PDF), poster kegiatan (JPG/PNG), dan pesan broadcast chat ke **Google Calendar** secara instan dengan otentikasi **Google OAuth 2.0**, manajemen pengaturan kredensial (BYOK), dan integrasi basis data **Neon PostgreSQL** di **Vercel**.
 
 ---
@@ -72,3 +75,30 @@ Buka [http://localhost:3000](http://localhost:3000) di browser Anda.
 - Fitur ini mengelola agenda EasyCal tanpa peserta undangan Google. Event yang sudah dihapus di Google Calendar perlu dipulihkan di Google Calendar sebelum sinkronisasi ulang.
 
 Verifikasi tanpa mengubah kegiatan nyata: `node --experimental-strip-types scratch/test-event-lifecycle.ts`.
+
+## Memperbarui waktu atau tempat melalui Telegram
+
+- Kirim surat PDF atau teks perubahan yang menyebut judul kegiatan. AI membaca nilai baru pada narasi **semula ... menjadi ...**, ralat, atau perubahan jadwal/tempat. Pembaruan otomatis hanya dilakukan jika satu kegiatan aktif cocok dengan judul dan tanggal semula (jika tersedia).
+- Jika kegiatan belum dapat ditentukan, ketik `/agenda`, lalu `/update 1 jam menjadi 13.00` atau `/update 1 tempat menjadi Ruang B`. Nomor merujuk ke daftar terakhir dan berlaku 15 menit. Untuk surat gambar, gunakan caption `#poster` agar masuk alur ekstraksi agenda.
+- Perubahan jam saja mempertahankan tanggal dan durasi lama; perubahan tempat saja mempertahankan waktu. Jika jam akhir baru disebutkan, jam tersebut digunakan. Perubahan menggunakan event Google Calendar dan folder dokumentasi yang sama.
+- Jika Google Calendar gagal diperbarui, jadwal baru disimpan di EasyCal. Ketik `/agenda` lagi, lalu `sinkron 1` sesuai nomor kegiatan untuk mencoba ulang. Pemilihan yang kedaluwarsa atau ambigu tidak membuat agenda baru.
+
+## Mengatasi `invalid_grant` pada Google Drive
+
+Token Google yang kedaluwarsa atau dicabut perlu otorisasi ulang. Ketik `/connect`, tekan **Hubungkan Ulang Google**, pilih akun yang sama, lalu kirim ulang foto. Pembacaan token mengutamakan database agar login ulang tidak tertimpa cache lama.
+
+Jika masalah berulang setiap tujuh hari, periksa status publikasi OAuth di Google Cloud: aplikasi eksternal dengan status **Testing** menerbitkan refresh token yang berlaku tujuh hari untuk izin Calendar/Drive. Atur status produksi sesuai konfigurasi aplikasi, lalu otorisasi ulang. Lihat [dokumentasi Google OAuth](https://developers.google.com/identity/protocols/oauth2#expiration).
+
+Verifikasi tanpa memanggil layanan nyata: `node --experimental-strip-types scratch/test-google-auth-recovery.ts`.
+
+## Dokumentasi & aturan perubahan
+
+- [PRD.md](PRD.md): kebutuhan dan perilaku produk.
+- [Architecture.md](Architecture.md): komponen dan alur integrasi.
+- [Schema.md](Schema.md): penyimpanan dan kontrak data.
+- [Design.md](Design.md): desain antarmuka dan interaksi.
+- [Rules.md](Rules.md): standar teknis pengembangan.
+- [AGENTS.md](AGENTS.md): aturan kerja, pembaruan dokumentasi, dan format catatan rilis.
+- [CHANGELOG.md](CHANGELOG.md): perubahan yang belum dirilis dan riwayat rilis.
+
+Setiap perubahan wajib memperbarui changelog dan seluruh dokumen yang terdampak sebelum pekerjaan dinyatakan selesai atau dilakukan commit, push, maupun deploy.

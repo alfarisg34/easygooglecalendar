@@ -66,11 +66,11 @@ Sekarang setiap dokumen surat dinas, poster, atau pesan broadcast yang Anda kiri
 
     // 3. Also sync to legacy/token-store for Telegram compatibility
     await saveUserGoogleAuth({
-      userId: state,
+      userId: dbUser.id,
       email,
       name,
       picture,
-      refreshToken: tokens.refresh_token || '',
+      refreshToken: dbUser.google_refresh_token || '',
       accessToken: tokens.access_token || undefined,
       expiryDate: tokens.expiry_date || undefined,
       updatedAt: new Date().toISOString()

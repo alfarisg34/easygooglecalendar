@@ -44,6 +44,10 @@ function saveLocalFileStore(data: Record<string, UserGoogleAuth>) {
  */
 export async function saveUserGoogleAuth(auth: UserGoogleAuth): Promise<void> {
   const key = `user_auth:${auth.userId}`;
+  // Reconnect invalidates aliases pointing to older credentials.
+  for (const [alias, cached] of memoryStore) {
+    if (cached.email === auth.email || cached.userId === auth.userId) memoryStore.delete(alias);
+  }
   memoryStore.set(key, auth);
 
   // 1. Try Upstash / Vercel KV if configured in Environment Variables
@@ -80,14 +84,6 @@ export async function getUserGoogleAuth(userId: string | number): Promise<UserGo
   const normalizedId = strId.startsWith('tg_') ? strId : `tg_${strId}`;
   const key = `user_auth:${normalizedId}`;
 
-  // 1. Check memory cache first
-  if (memoryStore.has(key)) {
-    return memoryStore.get(key) || null;
-  }
-  if (memoryStore.has(strId)) {
-    return memoryStore.get(strId) || null;
-  }
-
   // 2. Check Neon PostgreSQL Database
   try {
     const rawId = strId.replace(/^tg_/, '');
@@ -118,6 +114,14 @@ export async function getUserGoogleAuth(userId: string | number): Promise<UserGo
     // Neon DB lookup error, continue to fallback
   }
 
+  // Database is authoritative after reconnect; cache is only a fallback.
+  if (memoryStore.has(key)) {
+    return memoryStore.get(key) || null;
+  }
+  if (memoryStore.has(strId)) {
+    return memoryStore.get(strId) || null;
+  }
+
   // 3. Try Upstash / Vercel KV
   const kvUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
   const kvToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -146,9 +150,10 @@ export async function getUserGoogleAuth(userId: string | number): Promise<UserGo
     memoryStore.set(key, localData[key]);
     return localData[key];
   }
-  if (localData[strId]) {
-    memoryStore.set(strId, localData[strId]);
-    return localData[strId];
+  if (localData[`user_auth:${strId}`] || localData[strId]) {
+    const auth = localData[`user_auth:${strId}`] || localData[strId];
+    memoryStore.set(strId, auth);
+    return auth;
   }
 
   return null;

@@ -159,3 +159,12 @@ Ruang kerja khusus untuk pengunggahan dan auto-filing foto dokumentasi fisik keg
 * **Kurva Transisi Snappy**: `--ease-snappy: cubic-bezier(0.16, 1, 0.3, 1)` memberikan akselerasi awal cepat dan perlambatan halus (*ultra-crisp feel*).
 * **Durasi Cepat**: `--duration-fast: 150ms` untuk respon hover dan klik instan tanpa lag visual.
 * **Tekstur Noise Halus**: Latar belakang seluruh halaman dilapisi SVG fractal noise ber-opacity `0.025` yang memberikan tekstur kertas taktil mikro pada monitor modern beresolusi tinggi.
+
+
+## 7. Interaksi Telegram untuk Perubahan & Reconnect
+
+- Panduan bot menjelaskan pengiriman surat perubahan atau pemilihan kegiatan lewat `/agenda` dan `/update 1 jam menjadi 13.00` / `/update 1 tempat menjadi Ruang B`. Nomor mengikuti daftar terakhir dan berlaku 15 menit.
+- Pembaruan berhasil menampilkan judul, waktu mulai dalam WIB, tempat, dan hasil sinkronisasi. Jika kegiatan ambigu atau versi daftar sudah berubah, bot meminta pengguna memuat daftar dan memilih kembali.
+- Jika jadwal tersimpan di EasyCal tetapi Google Calendar belum diperbarui, pesan membedakan kedua status tersebut dan memberikan langkah `/agenda` lalu `sinkron <nomor>`.
+- Pada `/connect`, akun yang masih terhubung tetap memperoleh tombol **Hubungkan Ulang Google** serta **Buka Pengaturan Web**. Kegagalan invalid_grant mengarahkan pengguna login ulang dengan akun yang sama lalu mengirim ulang berkas.
+- Pembaruan surat/pesan ini adalah interaksi Telegram; tidak ada formulir pembaruan jadwal baru pada web. Folder dokumentasi dan identitas event kalender dipertahankan.

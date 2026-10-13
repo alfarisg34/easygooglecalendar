@@ -1,3 +1,6 @@
+import { createHash } from 'crypto';
+import { matchUpdateEvent, updateExistingEvent } from './event-update';
+import { readAgendaSession } from './event-lifecycle-store';
 import { TelegramUpdate, CalendarEvent } from './types';
 import { extractEventFromSource } from './gemini';
 import { DateTime } from 'luxon';
@@ -20,6 +23,9 @@ function buildTelegramUsageGuide(): string {
 *Mencatat kegiatan*
 Kirim surat undangan PDF, poster JPG/PNG, atau teks lengkap undangan. Setelah berhasil diproses, agenda otomatis disimpan ke Google Calendar. Undangan yang terdeteksi duplikat tidak dibuat ulang.
 Untuk gambar poster, tambahkan caption \`#poster\` agar diproses sebagai agenda.
+
+*Memperbarui kegiatan*
+Kirim surat perubahan/ralat atau pesan yang menyebut judul kegiatan dan waktu/tempat baru. Untuk memilih kegiatan secara pasti, ketik /agenda lalu /update 1 jam menjadi 13.00 atau /update 1 tempat menjadi Ruang B. Nomor berlaku 15 menit.
 
 *Foto dokumentasi*
 Kirim foto kegiatan dengan caption \`#foto\`. Bot mencocokkan foto dengan kegiatan yang sudah tercatat dan menyimpannya ke Google Drive tanpa membuat agenda baru. Jika kegiatan belum bisa ditentukan, pilih kegiatan melalui menu Foto Dokumentasi di web.
@@ -439,8 +445,8 @@ export async function handleTelegramWebhook(
       await sendTelegramMessage({
         botToken,
         chatId,
-        text: `✅ *Akun Anda Sudah Terhubung!* 🚀\n\n📧 *Email*: ${userAuth?.email}\n📱 *No. HP*: ${dbUser?.phone_number || '-'}\n📅 *Kalender*: ${dbUser?.calendar_id || 'primary'}\n\nKirimkan berkas *Surat Dinas PDF* atau *Poster Flyer* untuk langsung menjadwalkan ke Google Calendar!`,
-        inlineButtons: [{ text: '⚙️ Buka Pengaturan Web', url: hostOrigin }]
+        text: `✅ *Akun Anda Sudah Terhubung!* 🚀\n\n📧 *Email*: ${userAuth?.email}\n📱 *No. HP*: ${dbUser?.phone_number || '-'}\n📅 *Kalender*: ${dbUser?.calendar_id || 'primary'}\n\nJika unggah Drive atau sinkronisasi gagal karena otorisasi, tekan Hubungkan Ulang Google dan pilih akun yang sama. Setelah itu kirim ulang berkas.`,
+        inlineButtons: [{ text: 'Hubungkan Ulang Google', url: authUrl }, { text: 'Buka Pengaturan Web', url: hostOrigin }]
       });
       return { ok: true };
     }
@@ -1016,7 +1022,7 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
   }
 
   // Process Text Chat
-  if (text.length >= 20) {
+  if (text.length >= 20 || /^\/update\b/i.test(text)) {
     if (!effectiveGeminiKey) {
       await sendGeminiApiKeyMissingTutorial({ botToken, chatId, hostOrigin });
       return { ok: true };
@@ -1074,6 +1080,8 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
         userAuth,
         dbUser,
         progressMessageId: initRes.message_id,
+        updateNumber: /^\/update\s+(\d+)\b/i.exec(text)?.[1],
+        forceUpdate: /^\/update\b|\bsemula\b[\s\S]*\bmenjadi\b|\b(?:perubahan|ralat|revisi)\s+(?:waktu|tempat|jadwal)\b/i.test(text),
         sourceType: 'text',
         fileName: 'salinan_undangan.txt',
         fileData: {
@@ -1209,6 +1217,8 @@ async function processAndDispatchEvent(params: {
   chatId: number;
   userId: number;
   event: CalendarEvent;
+  updateNumber?: string;
+  forceUpdate?: boolean;
   hostOrigin: string;
   userAuth?: any;
   dbUser?: any;
@@ -1237,6 +1247,27 @@ async function processAndDispatchEvent(params: {
       userAuth?.email
     ];
     const recentEvents = await getRecentExtractedEventsForUser(candidateUserIds, 50);
+    if (event.update || params.forceUpdate) {
+      try {
+        if (!event.update) throw new Error('Perubahan belum terbaca. Gunakan /update 1 jam menjadi 13.00 atau /update 1 tempat menjadi Ruang B setelah /agenda.');
+        const owner = { userId: String(dbUser?.id || userAuth?.userId || userId), email: dbUser?.email || userAuth?.email, telegramChatId: String(userId) };
+        let matched = matchUpdateEvent(event, recentEvents);
+        let version = matched?.lifecycle_version || 0;
+        if (params.updateNumber) {
+          const session = await readAgendaSession(`${createHash('sha256').update(botToken).digest('hex').slice(0, 16)}:${chatId}:${userId}:${owner.userId}`);
+          const index = Number(params.updateNumber) - 1;
+          if (!session || session.status !== 'active' || !Number.isSafeInteger(index) || index < 0 || !session.ids[index]) throw new Error('Ketik /agenda terlebih dahulu, lalu /update <nomor> <perubahan>.');
+          matched = { id: session.ids[index] } as typeof matched;
+          version = session.versions[index];
+        }
+        if (!matched) throw new Error('Kegiatan lama belum dapat ditentukan secara pasti. Ketik /agenda lalu /update <nomor> <waktu/tempat baru>.');
+        const result = await updateExistingEvent({ owner, eventId: matched.id, expectedVersion: version, update: event.update, calendarId: dbUser?.calendar_id });
+        await sendTelegramMessage({ botToken, chatId, text: result.message + '\n\n' + result.event.title + '\nWaktu: ' + DateTime.fromISO(result.event.start_time).setZone('Asia/Jakarta').toFormat('dd LLL yyyy HH:mm') + ' WIB\nTempat: ' + (result.event.location || '') });
+      } catch (error) {
+        await sendTelegramMessage({ botToken, chatId, text: error instanceof Error ? error.message : 'Perubahan belum dapat diproses.' });
+      }
+      return;
+    }
     const dupResult = findDuplicateEvent(event, recentEvents);
 
     if (dupResult.isDuplicate && dupResult.matchedEvent) {
@@ -1258,6 +1289,10 @@ async function processAndDispatchEvent(params: {
     }
   } catch (err) {
     console.error('Error during duplicate check in Telegram:', err);
+    if (event.update || params.forceUpdate) {
+      await sendTelegramMessage({ botToken, chatId, text: 'Riwayat kegiatan belum dapat dibaca. Coba kirim perubahan lagi.' });
+      return;
+    }
   }
 
   // 2. Dispatch to calendar and Google Drive if not duplicate

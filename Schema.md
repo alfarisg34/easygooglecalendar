@@ -180,6 +180,7 @@ Seluruh pertukaran data di aplikasi dikendalikan oleh tipe data ketat pada `lib/
 Kontrak hasil ekstraksi standar yang siap disinkronisasi ke Google Calendar:
 ```typescript
 export interface CalendarEvent {
+  update?: EventUpdate;
   title: string;
   start_time: string; // Format ISO 8601 (e.g. 2026-09-10T09:00:00+07:00)
   end_time: string;   // Format ISO 8601
@@ -193,6 +194,26 @@ export interface CalendarEvent {
   google_calendar_url?: string;
 }
 ```
+
+### 4.1.1 `EventUpdate` & Penyimpanan Perubahan
+
+Metadata perubahan hasil ekstraksi, digunakan pada alur pembaruan Telegram:
+
+```typescript
+export interface EventUpdate {
+  original_date?: string; // YYYY-MM-DD: tanggal semula untuk pencocokan
+  date?: string;          // YYYY-MM-DD: tanggal baru
+  start_clock?: string;   // HH:mm: jam mulai baru
+  end_clock?: string;     // HH:mm: jam akhir baru
+  location?: string;      // tempat baru
+}
+```
+
+Properti yang tidak disebutkan dalam surat/pesan dihilangkan; nilai default hasil normalisasi agenda baru tidak dipakai untuk perubahan parsial. Kontrak ini bukan kolom JSON baru di database. Nilai perubahan yang sudah digabung disimpan ke `extracted_events.start_time`, `end_time`, dan `location`.
+
+Alur ini memakai kolom lifecycle yang sudah dimigrasikan oleh `initDatabase`: `activity_status`, `lifecycle_version`, `lifecycle_sync`, `lifecycle_error`, `lifecycle_updated_at`, `lifecycle_channel`, `lifecycle_history`, dan `calendar_backup`. Versi dipakai untuk klaim perubahan; status processing/error/synced/local dan pesan kegagalan mendukung percobaan ulang. `google_event_id`, `google_calendar_id`, dan identitas folder/berkas Drive dipertahankan.
+
+Pemilihan bernomor menggunakan `telegram_agenda_sessions` (session_key, payload JSONB, expires_at). Payload menyimpan ID kegiatan, versi, status daftar, dan kedaluwarsa; fallback lokal berada di `.telegram_agenda_sessions.json`. Jadwal baru tetap tersedia di EasyCal jika sinkronisasi Google gagal.
 
 ### 4.2 `ExtractionRequest` & `ExtractionResponse`
 Kontrak pengiriman berkas dan tanggapan mesin AI Gemini:
