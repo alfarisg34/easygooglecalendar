@@ -20,6 +20,7 @@ export default function EventLifecycleDialog(props: {
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [reason, setReason] = useState('');
+  const [openedAt] = useState(() => Date.now());
   const restoring = props.event.activity_status === 'cancelled';
   useEffect(() => { dialog.current?.showModal(); }, []);
   return (
@@ -31,7 +32,7 @@ export default function EventLifecycleDialog(props: {
         <p>{DateTime.fromISO(props.event.start_time).setZone('Asia/Jakarta').toFormat('dd MMM yyyy, HH:mm')}–{DateTime.fromISO(props.event.end_time).setZone('Asia/Jakarta').toFormat('HH:mm')} WIB</p>
         <p>Kalender: {props.event.google_calendar_id || 'Kalender kegiatan yang tersimpan'}</p>
         <p>{restoring ? 'Judul, pengingat, dan ketersediaan kalender sebelum pembatalan akan dipulihkan.' : 'Kegiatan, undangan, dan dokumentasi tetap tersimpan. Setelah sinkronisasi berhasil, pengingat Google Calendar dimatikan dan waktunya ditandai tersedia.'}</p>
-        {restoring && Date.parse(props.event.end_time) < Date.now() && <p className="lifecycle-warning">Jadwal kegiatan sudah lewat.</p>}
+        {restoring && Date.parse(props.event.end_time) < openedAt && <p className="lifecycle-warning">Jadwal kegiatan sudah lewat.</p>}
         {!restoring && <label className="lifecycle-reason">Alasan pembatalan (opsional)
           <textarea autoFocus value={reason} onChange={e => setReason(e.target.value)} maxLength={500} disabled={props.busy} rows={3} />
         </label>}

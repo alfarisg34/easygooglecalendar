@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { extractEventFromSource } from '@/lib/gemini';
 import { generateICSContent } from '@/lib/calendar-builder';
-import { insertGoogleCalendarEvent } from '@/lib/google-calendar-api';
+import { syncGoogleCalendarEventWithSource, CalendarAttachmentResult } from '@/lib/google-calendar-api';
 import { getUserGoogleAuth } from '@/lib/token-store';
 import { getSessionFromRequest } from '@/lib/auth-session';
 import { getUserById, getUserByEmail, saveExtractedEvent, getRecentExtractedEventsForUser } from '@/lib/db';
 import { ExtractionRequest } from '@/lib/types';
 import { findDuplicateEvent } from '@/lib/duplicate-detector';
-import { createEventFolderAndUpload } from '@/lib/google-drive-api';
+import { safeError } from '@/lib/safe-error';
 
 export const maxDuration = 60; // 60 seconds serverless timeout
 
@@ -32,7 +32,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    let userId = dbUser?.id || session?.userId || req.headers.get('x-user-id') || 'web_user';
+    const userId = dbUser?.id || session?.userId || 'web_user';
+    if(session && req.headers.get('origin') && req.headers.get('origin')!==new URL(req.url).origin)return NextResponse.json({success:false,error:'Origin ditolak.'},{status:403});
 
     if (contentType.includes('multipart/form-data')) {
       const formData = await req.formData();
@@ -43,16 +44,16 @@ export async function POST(req: NextRequest) {
       passedEngine = (formData.get('engine') as string) || '';
       autoSync = formData.get('autoSync') === 'true';
       forceSync = formData.get('forceSync') === 'true';
-      userId = (formData.get('userId') as string) || userId;
       if (formData.get('calendarId')) {
         customCalendarId = formData.get('calendarId') as string;
       }
 
-      const finalApiKey = passedApiKey || dbUser?.gemini_api_key || process.env.GEMINI_API_KEY || '';
+      const finalApiKey = passedApiKey || dbUser?.gemini_api_key || (session?process.env.GEMINI_API_KEY:'') || '';
       const finalModel = passedModel || dbUser?.model_name || 'gemini-2.0-flash';
       const finalEngine = (passedEngine || dbUser?.ocr_engine || 'gemini') as any;
 
       if (file) {
+        if(file.size>8*1024*1024)return NextResponse.json({success:false,error:'Batas berkas 8 MB.'},{status:413});
         const arrayBuffer = await file.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
         const base64Data = buffer.toString('base64');
@@ -87,10 +88,9 @@ export async function POST(req: NextRequest) {
       passedApiKey = body.apiKey || req.headers.get('x-api-key') || '';
       autoSync = Boolean(body.autoSync);
       forceSync = Boolean(body.forceSync);
-      userId = body.userId || userId;
       if (body.calendarId) customCalendarId = body.calendarId;
 
-      const finalApiKey = passedApiKey || dbUser?.gemini_api_key || process.env.GEMINI_API_KEY || '';
+      const finalApiKey = passedApiKey || dbUser?.gemini_api_key || (session?process.env.GEMINI_API_KEY:'') || '';
       const finalModel = body.model || dbUser?.model_name || 'gemini-2.0-flash';
       const finalEngine = body.engine || dbUser?.ocr_engine || 'gemini';
 
@@ -101,6 +101,7 @@ export async function POST(req: NextRequest) {
         engine: finalEngine
       };
     }
+    if((extractionParams.base64Data?.length||0)>12*1024*1024 || (extractionParams.text?.length||0)>50000)return NextResponse.json({success:false,error:'Sumber melampaui batas pemrosesan.'},{status:413});
 
     if (!extractionParams.apiKey) {
       return NextResponse.json(
@@ -120,6 +121,8 @@ export async function POST(req: NextRequest) {
         { status: 500 }
       );
     }
+    if(result.event.needs_confirmation)return NextResponse.json({...result,requiresConfirmation:true,
+      message:'Tanggal/jam perlu diperiksa. Agenda belum dibuat. Lengkapi sumber undangan dan proses kembali, atau gunakan konfirmasi di bot Telegram.'});
 
     // Attach ICS content string
     const icsContent = generateICSContent(result.event);
@@ -133,10 +136,9 @@ export async function POST(req: NextRequest) {
       dbUser?.id,
       dbUser?.email,
       dbUser?.telegram_chat_id,
-      userId
     ];
 
-    const recentEvents = await getRecentExtractedEventsForUser(candidateIds, 60);
+    const recentEvents = session?await getRecentExtractedEventsForUser(candidateIds, 60):[];
     const duplicateCheck = findDuplicateEvent(result.event, recentEvents);
 
     if (duplicateCheck.isDuplicate && duplicateCheck.matchedEvent && (!forceSync || duplicateCheck.matchedEvent.activity_status === 'cancelled')) {
@@ -153,47 +155,28 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    let autoSyncResult: any = null;
-    let gdriveResult: any = null;
+    let autoSyncResult: { synced: boolean; email: string; calendarId: string; htmlLink?: string; eventId?: string; attachmentResult: CalendarAttachmentResult } | null = null;
+    let gdriveResult: Awaited<ReturnType<typeof syncGoogleCalendarEventWithSource>>['gdriveResult'] | null = null;
 
     // Check if auto-sync to Google Calendar is active for this user
-    if (autoSync || userId) {
+    if (session && (autoSync || userId)) {
       const userAuth = await getUserGoogleAuth(userId);
       if (userAuth && userAuth.refreshToken) {
-        const directInsert = await insertGoogleCalendarEvent(userId, result.event, customCalendarId);
-        if (directInsert.success) {
-          autoSyncResult = {
-            synced: true,
-            email: userAuth.email,
-            calendarId: customCalendarId,
-            htmlLink: directInsert.htmlLink,
-            eventId: directInsert.eventId
-          };
-        }
-
-        // Create Google Drive event folder & upload source file / text as .txt
-        try {
-          gdriveResult = await createEventFolderAndUpload({
-            userId,
-            event: result.event,
-            parentFolderId: dbUser?.gdrive_root_folder_id,
-            fileData: {
-              base64Data: extractionParams.base64Data,
-              textContent: extractionParams.text,
-              fileName: extractionParams.fileName,
-              mimeType: extractionParams.mimeType,
-              sourceType: extractionParams.sourceType
-            }
-          });
-        } catch (driveErr) {
-          console.error('Failed to create Drive folder / upload in API extract:', driveErr);
+        const synced = await syncGoogleCalendarEventWithSource({ userId, event: result.event,
+          calendarId: customCalendarId, parentFolderId: dbUser?.gdrive_root_folder_id,
+          fileData: { base64Data: extractionParams.base64Data, textContent: extractionParams.text,
+            fileName: extractionParams.fileName, mimeType: extractionParams.mimeType, sourceType: extractionParams.sourceType } });
+        gdriveResult = synced.gdriveResult;
+        if (synced.insertResult.success) {
+          autoSyncResult = { synced: true, email: userAuth.email, calendarId: customCalendarId,
+            htmlLink: synced.insertResult.htmlLink, eventId: synced.insertResult.eventId, attachmentResult: synced.attachmentResult };
         }
       }
     }
 
     // Save to extracted_events history in Neon PostgreSQL
     let savedRecord = null;
-    if (targetUserId) {
+    if (session && targetUserId) {
       try {
         savedRecord = await saveExtractedEvent({
           user_id: targetUserId,
@@ -219,7 +202,7 @@ export async function POST(req: NextRequest) {
           file_name: extractionParams.fileName || (extractionParams.sourceType === 'text' ? 'salinan_undangan.txt' : 'Dokumen')
         });
       } catch (err) {
-        console.error('Failed to save extracted event record:', err);
+        console.error('Failed to save extracted event record');
       }
     }
 
@@ -232,7 +215,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (err: any) {
     return NextResponse.json(
-      { success: false, error: `Internal Server Error: ${err.message}` },
+      { success: false, error: `Internal Server Error: ${safeError(err)}` },
       { status: 500 }
     );
   }

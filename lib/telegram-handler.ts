@@ -1,12 +1,21 @@
+import { safeError } from './safe-error';
 import { createHash } from 'crypto';
-import { matchUpdateEvent, updateExistingEvent } from './event-update';
+import { telegramContext } from './telegram-context';
+import { telegramCall } from './telegram-api';
+import { createTelegramBinding } from './telegram-security';
+import { currentSource, handleWorkflowInput, offerCreateConfirmation, offerPhotoSelection, offerUpdateConfirmation, registerArchiveRecovery } from './telegram-workflows';
+import { readBotState, writeBotState, botIdentity } from './telegram-state';
+import { bindVerifiedTelegramAccount } from './db';
+import { telegramDiagnostics } from './telegram-diagnostics';
+import { matchUpdateEvent } from './event-update';
+import { findOwnedEvent } from './event-lifecycle-store';
 import { readAgendaSession } from './event-lifecycle-store';
 import { TelegramUpdate, CalendarEvent } from './types';
 import { extractEventFromSource } from './gemini';
 import { DateTime } from 'luxon';
 import { handleTelegramAgenda } from './telegram-agenda';
 import { getUserGoogleAuth, deleteUserGoogleAuth } from './token-store';
-import { insertGoogleCalendarEvent } from './google-calendar-api';
+import { syncGoogleCalendarEventWithSource } from './google-calendar-api';
 import { getUserByTelegram, getBotAdminSettings, disconnectTelegramUser, saveExtractedEvent, linkTelegramUserByPhone, getRecentExtractedEventsForUser, updateUserSettings, saveEventDocumentation, updateEventGdriveFolder } from './db';
 import { findDuplicateEvent, DuplicateDetectionResult } from './duplicate-detector';
 import { createEventFolderAndUpload, parseGoogleDriveFolderId, uploadDocumentationPhotoToDrive } from './google-drive-api';
@@ -25,10 +34,10 @@ Kirim surat undangan PDF, poster JPG/PNG, atau teks lengkap undangan. Setelah be
 Untuk gambar poster, tambahkan caption \`#poster\` agar diproses sebagai agenda.
 
 *Memperbarui kegiatan*
-Kirim surat perubahan/ralat atau pesan yang menyebut judul kegiatan dan waktu/tempat baru. Untuk memilih kegiatan secara pasti, ketik /agenda lalu /update 1 jam menjadi 13.00 atau /update 1 tempat menjadi Ruang B. Nomor berlaku 15 menit.
+Kirim surat perubahan/ralat atau pesan yang menyebut judul kegiatan dan waktu/tempat baru. Untuk memilih kegiatan secara pasti, ketik /agenda lalu /update 1 jam menjadi 13.00 atau /update 1 tempat menjadi Ruang B. Nomor berlaku 15 menit. Bot menampilkan semula ? menjadi dan meminta konfirmasi sebelum menerapkan perubahan; tombol undo tersedia sesudahnya.
 
 *Foto dokumentasi*
-Kirim foto kegiatan dengan caption \`#foto\`. Bot mencocokkan foto dengan kegiatan yang sudah tercatat dan menyimpannya ke Google Drive tanpa membuat agenda baru. Jika kegiatan belum bisa ditentukan, pilih kegiatan melalui menu Foto Dokumentasi di web.
+Kirim foto kegiatan dengan caption \`#foto\`. Bot mencocokkan foto dengan kegiatan yang sudah tercatat dan menyimpannya ke Google Drive tanpa membuat agenda baru. Jika kegiatan belum bisa ditentukan, pilih kegiatan melalui tombol Telegram. Album memakai satu pilihan tujuan.
 
 *Folder Google Drive*
 \`/setdrive <link folder>\` — Atur folder induk untuk berkas kegiatan berikutnya.
@@ -52,6 +61,15 @@ Alasan opsional: \`batal 1 Penyelenggara membatalkan\`.
 \`sinkron 1\` — Coba lagi jika perubahan kalender gagal.
 Nomor mengikuti daftar terakhir di chat ini, berlaku 15 menit. Halaman berikutnya: \`/agenda 2\` atau \`/dibatalkan 2\`.
 Pembatalan mempertahankan kegiatan dan berkas. Setelah sinkronisasi berhasil, kalender diberi tanda [DIBATALKAN], pengingat dimatikan, dan waktunya ditandai tersedia.
+
+*Pencarian dan pemulihan*
+/cari judul ? Cari kegiatan, termasuk yang sudah lewat.
+/lampau ? Kegiatan yang sudah selesai.
+/hariini, /besok, /minggu ? Ringkasan agenda WIB.
+/agenda YYYY-MM-DD YYYY-MM-DD ? Rentang tanggal.
+/arsip 1 ? Pasang sumber yang sudah ada ke Calendar.
+/status cek ? Periksa akses layanan tanpa membuat event.
+Tombol Coba arsip/lampiran lagi berlaku 24 jam.
 
 *Riwayat kegiatan*
 Buka web EasyCal dengan akun Google yang sama untuk melihat riwayat, berkas undangan, dan foto dokumentasi.`;
@@ -80,7 +98,7 @@ export async function sendTelegramMessage(params: {
   if (params.inlineButtons && params.inlineButtons.length > 0) {
     bodyPayload.reply_markup = {
       inline_keyboard: [
-        params.inlineButtons.map(btn => ({ text: btn.text, url: btn.url, callback_data: btn.callback_data }))
+        ...Array.from({length:Math.ceil(params.inlineButtons.length/2)},(_,i)=>params.inlineButtons!.slice(i*2,i*2+2).map(btn=>({text:btn.text,url:btn.url,callback_data:btn.callback_data})))
       ]
     };
   } else if (params.replyButtons && params.replyButtons.length > 0) {
@@ -95,38 +113,8 @@ export async function sendTelegramMessage(params: {
     };
   }
 
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(bodyPayload)
-    });
-    
-    const data = await res.json();
-    if (data.ok && data.result?.message_id) {
-      return { ok: true, message_id: data.result.message_id };
-    }
-
-    if (!res.ok) {
-      const errText = await res.text();
-      console.warn('Telegram sendMessage Markdown failed, retrying plain text:', errText);
-      // Fallback: Retry without parse_mode if Markdown parsing failed
-      delete bodyPayload.parse_mode;
-      const retryRes = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(bodyPayload)
-      });
-      const retryData = await retryRes.json();
-      if (retryData.ok && retryData.result?.message_id) {
-        return { ok: true, message_id: retryData.result.message_id };
-      }
-    }
-  } catch (err) {
-    console.error('Telegram sendMessage network error:', err);
-  }
-
-  return { ok: false };
+  const result=await telegramCall(params.botToken,'sendMessage',bodyPayload);
+  return {ok:result.ok,message_id:result.result?.message_id};
 }
 
 /**
@@ -151,32 +139,12 @@ export async function editTelegramMessage(params: {
   if (params.inlineButtons && params.inlineButtons.length > 0) {
     bodyPayload.reply_markup = {
       inline_keyboard: [
-        params.inlineButtons.map(btn => ({ text: btn.text, url: btn.url, callback_data: btn.callback_data }))
+        ...Array.from({length:Math.ceil(params.inlineButtons.length/2)},(_,i)=>params.inlineButtons!.slice(i*2,i*2+2).map(btn=>({text:btn.text,url:btn.url,callback_data:btn.callback_data})))
       ]
     };
   }
 
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(bodyPayload)
-    });
-    if (!res.ok) {
-      delete bodyPayload.parse_mode;
-      const retry = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(bodyPayload)
-      });
-      const data = await retry.json();
-      return retry.ok && data.ok === true;
-    }
-    const data = await res.json();
-    return data.ok === true;
-  } catch (err) {
-    return false;
-  }
+  return (await telegramCall(params.botToken,'editMessageText',bodyPayload)).ok;
 }
 
 /**
@@ -318,19 +286,24 @@ export async function downloadTelegramFile(params: {
   fileId: string;
 }): Promise<{ base64Data: string; mimeType: string }> {
   const getFileUrl = `${TELEGRAM_API_URL}/bot${params.botToken}/getFile?file_id=${encodeURIComponent(params.fileId)}`;
-  const fileInfoRes = await fetch(getFileUrl);
+  const fileInfoRes = await fetch(getFileUrl,{signal:AbortSignal.timeout(10000)});
   const fileInfo = await fileInfoRes.json();
 
   if (!fileInfo.ok || !fileInfo.result?.file_path) {
     throw new Error('Gagal mengambil metadata berkas dari Telegram.');
   }
+  const limit=Math.min(20*1024*1024,Math.max(1024,Number(process.env.TELEGRAM_MAX_FILE_BYTES)||8*1024*1024));
+  if(Number(fileInfo.result.file_size)>limit)throw new Error(`Ukuran berkas melampaui batas ${Math.floor(limit/1024/1024)} MB.`);
 
   const filePath = fileInfo.result.file_path;
   const downloadUrl = `${TELEGRAM_API_URL}/file/bot${params.botToken}/${filePath}`;
 
-  const fileRes = await fetch(downloadUrl);
-  const arrayBuffer = await fileRes.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
+  const fileRes = await fetch(downloadUrl,{signal:AbortSignal.timeout(15000)});
+  if(!fileRes.ok || !fileRes.body)throw new Error('Unduhan Telegram gagal.');
+  const reader=fileRes.body.getReader();const chunks:Uint8Array[]=[];let total=0;
+  try {while(true) {const item=await reader.read();if(item.done)break;total+=item.value.length;if(total>limit)throw new Error('Ukuran berkas melampaui batas unggahan.');chunks.push(item.value);}}
+  finally {await reader.cancel();}
+  const buffer = Buffer.concat(chunks);
   const base64Data = buffer.toString('base64');
 
   let mimeType = 'application/pdf';
@@ -341,6 +314,8 @@ export async function downloadTelegramFile(params: {
     mimeType = 'image/png';
   } else if (lower.endsWith('.webp')) {
     mimeType = 'image/webp';
+  } else if (lower.endsWith('.txt')) {
+    mimeType = 'text/plain';
   }
 
   return { base64Data, mimeType };
@@ -354,19 +329,37 @@ export async function handleTelegramWebhook(
   botToken: string, 
   geminiKey: string,
   hostOrigin: string = process.env.NEXT_PUBLIC_APP_URL || 'https://easycal.alfarighilmana.my.id'
-) {
-  const msg = update.callback_query?.message
+): Promise<{ok:boolean}> {
+  if(!telegramContext.getStore())return telegramContext.run({operationId:`direct:${botIdentity(botToken)}:${update.update_id}`},()=>handleTelegramWebhook(update,botToken,geminiKey,hostOrigin));
+  const incoming = update.callback_query?.message
     ? { ...update.callback_query.message, from: update.callback_query.from, text: '' }
     : update.message;
+  const msg=incoming?structuredClone(incoming):undefined;
   if (!msg || !msg.chat || !msg.from) return { ok: true };
 
   const chatId = msg.chat.id;
   const userId = msg.from.id;
+  if(msg.chat.type!=='private') {await sendTelegramMessage({botToken,chatId,text:'Gunakan chat pribadi dengan bot untuk menjaga undangan dan akun Anda.'});return {ok:true};}
+  const context=telegramContext.getStore()!;
+  context.source=msg.document?{fileId:msg.document.file_id,fileName:msg.document.file_name,mimeType:msg.document.mime_type,sourceType:/image\//i.test(msg.document.mime_type||'')||/\.(jpe?g|png|webp)$/i.test(msg.document.file_name||'')?'image':/\.txt$/i.test(msg.document.file_name||'')||msg.document.mime_type==='text/plain'?'text':'pdf'}
+    :msg.photo?.length?{fileId:msg.photo[msg.photo.length-1].file_id,fileName:'gambar_telegram.jpg',mimeType:'image/jpeg',sourceType:'image'}
+    :{textContent:msg.text||'',fileName:'salinan_undangan.txt',mimeType:'text/plain',sourceType:'text'};
+  const fileSize=msg.document?.file_size||msg.photo?.[msg.photo.length-1]?.file_size||0;
+  const fileLimit=Math.min(20*1024*1024,Number(process.env.TELEGRAM_MAX_FILE_BYTES)||8*1024*1024);
+  if(fileSize>fileLimit) {await sendTelegramMessage({botToken,chatId,text:`Berkas terlalu besar. Batas bot ${Math.floor(fileLimit/1024/1024)} MB.`});return {ok:true};}
+  if(msg.document && context.source.sourceType==='image') {msg.photo=[{...msg.document,file_unique_id:msg.document.file_id,width:0,height:0}];delete msg.document;}
+  else if(msg.document && context.source.sourceType==='text') {
+    const downloaded=await downloadTelegramFile({botToken,fileId:msg.document.file_id});
+    const content=Buffer.from(downloaded.base64Data,'base64').toString('utf8');
+    if(content.length>50000) {await sendTelegramMessage({botToken,chatId,text:'Berkas TXT maksimal 50.000 karakter.'});return {ok:true};}
+    msg.text=content;delete msg.document;context.source.textContent=content;
+  }
   const text = (msg.text || msg.caption || '').trim();
   const cleanText = text.toLowerCase();
 
   // 0. Handle Shared Contact (Instant Phone Number Verification & Auto-Binding)
   if (msg.contact && msg.contact.phone_number) {
+    if(msg.contact.user_id!==userId) {await sendTelegramMessage({botToken,chatId,text:'Bagikan kontak Anda sendiri melalui tombol Bagikan Kontak Saya. Kontak orang lain tidak dapat digunakan untuk menautkan akun.'});return {ok:true};}
     const contactPhone = msg.contact.phone_number;
     const linkedUser = await linkTelegramUserByPhone({
       tgUserId: userId,
@@ -374,6 +367,7 @@ export async function handleTelegramWebhook(
     });
 
     if (linkedUser && (linkedUser.google_refresh_token || linkedUser.email)) {
+      await bindVerifiedTelegramAccount(linkedUser.id,String(userId));
       await sendTelegramMessage({
         botToken,
         chatId,
@@ -393,7 +387,7 @@ export async function handleTelegramWebhook(
       });
       return { ok: true };
     } else {
-      const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
+      const authUrl = `${hostOrigin}/api/auth/google?binding=${await createTelegramBinding(userId)}`;
       await sendTelegramMessage({
         botToken,
         chatId,
@@ -422,7 +416,8 @@ export async function handleTelegramWebhook(
 
   // 1. Resolve this specific Telegram user's Google Calendar from Neon DB & Token Store (Method B: Personal State Binding)
   const dbUser = await getUserByTelegram({ tgUserId: userId });
-  const rawAuth = await getUserGoogleAuth(userId);
+  const rawAuth = dbUser ? await getUserGoogleAuth(dbUser.id)
+    :process.env.NODE_ENV==='production'?null:await getUserGoogleAuth(userId);
   const userAuth = rawAuth || (dbUser?.google_refresh_token ? {
     userId: dbUser.id,
     email: dbUser.email,
@@ -438,6 +433,15 @@ export async function handleTelegramWebhook(
   const botAdmin = await getBotAdminSettings(botToken);
   const rawKey = dbUser?.gemini_api_key || botAdmin?.gemini_api_key || geminiKey || process.env.GEMINI_API_KEY || '';
   const effectiveGeminiKey = rawKey.replace(/^["']|["']$/g, '').trim();
+  const owner={userId:String(dbUser?.id||userAuth?.userId||`tg_${userId}`),email:dbUser?.email||userAuth?.email,telegramChatId:String(userId)};
+  if(await handleWorkflowInput({botToken,chatId,userId,owner,update,user:dbUser,hostOrigin}))return {ok:true};
+  if(/^\/status(?:\s+cek)?$/.test(cleanText)) {
+    if(cleanText==='/status cek') {await sendTelegramMessage({botToken,chatId,text:await telegramDiagnostics(owner.userId,dbUser?.calendar_id||'primary',effectiveGeminiKey)});return {ok:true};}
+    const hour=Math.floor(Date.now()/3600000);
+    const usage=await readBotState<{count:number}>(`quota:${botIdentity(botToken)}:${userId}:${hour}`);
+    const last=await readBotState<{status:string;attempts:number}>(`last-job:${botIdentity(botToken)}:${userId}`);
+    await sendTelegramMessage({botToken,chatId,text:`Status EasyCal\nGoogle: ${userAuth?.refreshToken?'Terhubung (izin belum diuji langsung)':'Belum terhubung; gunakan /connect'}\nGemini: ${effectiveGeminiKey?'Kunci tersedia (kuota belum diuji langsung)':'Belum dikonfigurasi'}\nKalender: ${dbUser?.calendar_id||'primary'}\nPemrosesan jam ini: ${usage?.value.count||0}/${Number(process.env.TELEGRAM_HOURLY_LIMIT)||60}\nBatas berkas: ${Math.floor(fileLimit/1024/1024)} MB\nPekerjaan terakhir: ${last?.value.status||'Belum tercatat'}${last?` (${last.value.attempts} percobaan)`:''}\nJika akses Google ditolak/invalid_grant, ketik /connect dan hubungkan ulang.\nPanduan: /help`});return {ok:true};
+  }
 
   if (await handleTelegramAgenda({ update, botToken, chatId, userId, chatType: msg.chat.type,
     owner: dbUser ? { userId: dbUser.id, email: dbUser.email, telegramChatId: dbUser.telegram_chat_id }
@@ -447,7 +451,7 @@ export async function handleTelegramWebhook(
   // Command: /connect or /login
   if (cleanText.startsWith('/connect') || cleanText.startsWith('/login') || cleanText.startsWith('/auth')) {
     const isConnected = Boolean(userAuth && userAuth.email);
-    const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
+    const authUrl = `${hostOrigin}/api/auth/google?binding=${await createTelegramBinding(userId)}`;
 
     if (isConnected) {
       await sendTelegramMessage({
@@ -490,7 +494,7 @@ export async function handleTelegramWebhook(
   const isGuideButton = cleanText === '❓ panduan & status' || cleanText === 'panduan & status';
   if (isGuideCommand || isGuideButton || cleanText === 'help') {
     const isConnected = Boolean(userAuth?.refreshToken && userAuth.email);
-    const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
+    const authUrl = `${hostOrigin}/api/auth/google?binding=${await createTelegramBinding(userId)}`;
     const statusText = isConnected
       ? `✅ *Akun Google terhubung*\n📧 Email: ${userAuth?.email}\n👤 Nama: ${userAuth?.name || '-'}\n📱 No. HP: ${dbUser?.phone_number || '(Belum diisi di web)'}\n📅 Target kalender: ${dbUser?.calendar_id || 'primary'}`
       : `⚠️ *Akun Google belum terhubung*\nKetik /connect atau tekan Hubungkan Google Calendar. Anda juga bisa login di web, mengisi nomor HP, lalu menekan Bagikan Kontak Saya.`;
@@ -600,7 +604,7 @@ export async function handleTelegramWebhook(
   // Command: /start
   if (cleanText.startsWith('/start') || cleanText === 'start' || cleanText === 'halo' || cleanText === 'hai') {
     const isConnected = Boolean(userAuth && userAuth.email);
-    const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
+    const authUrl = `${hostOrigin}/api/auth/google?binding=${await createTelegramBinding(userId)}`;
 
     if (isConnected) {
       await sendTelegramMessage({
@@ -743,13 +747,13 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
           botToken,
           chatId,
           messageId: initRes.message_id,
-          text: `❌ Terjadi kesalahan saat memproses dokumen: ${err.message}`
+          text: `❌ Terjadi kesalahan saat memproses dokumen: ${safeError(err)}`
         });
       } else {
         await sendTelegramMessage({
           botToken,
           chatId,
-          text: `❌ Terjadi kesalahan saat memproses dokumen: ${err.message}`
+          text: `❌ Terjadi kesalahan saat memproses dokumen: ${safeError(err)}`
         });
       }
     }
@@ -800,7 +804,8 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
     }) : null;
 
     try {
-      const { base64Data, mimeType } = await downloadTelegramFile({ botToken, fileId: bestPhoto.file_id });
+      const downloaded=await downloadTelegramFile({botToken,fileId:bestPhoto.file_id});
+      const base64Data=downloaded.base64Data;const mimeType=context.source?.mimeType||downloaded.mimeType;
       const buffer = Buffer.from(base64Data, 'base64');
       const photoMeta = await extractPhotoMetadata(buffer);
 
@@ -827,9 +832,9 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
         const recentEvents = await getRecentExtractedEventsForUser(candidateUserIds, 50);
 
         const photoNotice = async (text: string) => {
-          const inlineButtons = [{ text: 'Pilih Kegiatan di Web', url: hostOrigin }];
-          if (initRes.message_id) await editTelegramMessage({ botToken, chatId, messageId: initRes.message_id, text, inlineButtons });
-          else await sendTelegramMessage({ botToken, chatId, text, inlineButtons });
+          if(initRes.message_id)await editTelegramMessage({botToken,chatId,messageId:initRes.message_id,text:'Foto memerlukan pemilihan kegiatan. Lihat pilihan di bawah.'});
+          await offerPhotoSelection({botToken,chatId,userId,owner,sources:currentSource().map(source=>({...source,takenAt:effectiveTakenAt||undefined,method:effectiveTakenAt?(photoMeta.takenAt?'exif_timestamp':'ocr_watermark'):'manual_selection'})),
+            reason:text.replace(/Buka menu Foto Dokumentasi[\s\S]*|Pilih kegiatan yang benar melalui[\s\S]*/, 'Pilih kegiatan langsung di bawah.')});
         };
         let watermarkResult = parseWatermarkTimestamp(classificationResult?.watermarkData);
         if (!photoMeta.takenAt && !watermarkResult.detected) {
@@ -864,7 +869,7 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
           parentFolderId: dbUser?.gdrive_root_folder_id,
           buffer,
           originalFileName: 'foto_dokumentasi_telegram.jpg',
-          mimeType,
+          mimeType:context.source?.mimeType||mimeType,
           takenAtIso: effectiveTakenAt
         });
 
@@ -979,10 +984,10 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
         dbUser,
         progressMessageId: initRes.message_id,
         sourceType: 'image',
-        fileName: 'poster_kegiatan.jpg',
+        fileName: context.source?.fileName||'poster_kegiatan.jpg',
         fileData: {
           base64Data,
-          fileName: 'poster_kegiatan.jpg',
+          fileName: context.source?.fileName||'poster_kegiatan.jpg',
           mimeType,
           sourceType: 'image'
         }
@@ -994,13 +999,13 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
           botToken,
           chatId,
           messageId: initRes.message_id,
-          text: `❌ Terjadi kesalahan saat memproses poster: ${err.message}`
+          text: `❌ Terjadi kesalahan saat memproses poster: ${safeError(err)}`
         });
       } else {
         await sendTelegramMessage({
           botToken,
           chatId,
-          text: `❌ Terjadi kesalahan saat memproses poster: ${err.message}`
+          text: `❌ Terjadi kesalahan saat memproses poster: ${safeError(err)}`
         });
       }
     }
@@ -1084,20 +1089,20 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
           botToken,
           chatId,
           messageId: initRes.message_id,
-          text: `❌ Terjadi kesalahan saat memproses teks: ${err.message}`
+          text: `❌ Terjadi kesalahan saat memproses teks: ${safeError(err)}`
         });
       } else {
         await sendTelegramMessage({
           botToken,
           chatId,
-          text: `❌ Terjadi kesalahan saat memproses teks: ${err.message}`
+          text: `❌ Terjadi kesalahan saat memproses teks: ${safeError(err)}`
         });
       }
     }
     return { ok: true };
   } else if (text.length > 0) {
     // Friendly response for short messages like 'halo', 'tes', 'hai'
-    const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
+    const authUrl = `${hostOrigin}/api/auth/google?binding=${await createTelegramBinding(userId)}`;
     const isConnected = Boolean(userAuth && userAuth.email);
 
     await sendTelegramMessage({
@@ -1198,7 +1203,8 @@ async function handleDuplicateNoticeTelegram(params: {
 /**
  * Checks for cross-modality duplicate event before dispatching to calendar
  */
-async function processAndDispatchEvent(params: {
+export async function processAndDispatchEvent(params: {
+  ownerConfirmed?:boolean;
   botToken: string;
   chatId: number;
   userId: number;
@@ -1220,12 +1226,27 @@ async function processAndDispatchEvent(params: {
     sourceType: 'pdf' | 'image' | 'text';
   };
 }) {
+  if(!params.event.update && !params.forceUpdate) {
+    const operation=telegramContext.getStore()?.operationId;
+    if(operation) {
+      const key=`extraction:${operation}:${params.userId}`;
+      const cached=await readBotState<CalendarEvent>(key);
+      if(cached)params.event=cached.value;
+      else await writeBotState(key,'extraction',params.event,0,Date.now(),Date.now()+7*86400000);
+    }
+  }
   const { botToken, chatId, userId, event, hostOrigin, userAuth, dbUser, progressMessageId, sourceType, fileName, fileData } = params;
 
   const finishUpdateNotice = async (text: string) => {
     if (progressMessageId && await editTelegramMessage({ botToken, chatId, messageId: progressMessageId, text })) return;
     await sendTelegramMessage({ botToken, chatId, text });
   };
+  if(!params.ownerConfirmed && !event.update && !params.forceUpdate && event.needs_confirmation) {
+    await offerCreateConfirmation({botToken,chatId,userId,owner:{userId:String(dbUser?.id||userAuth?.userId||`tg_${userId}`),email:dbUser?.email||userAuth?.email,telegramChatId:String(userId)},
+      event,sources:currentSource(params.fileData)});
+    if(progressMessageId)await editTelegramMessage({botToken,chatId,messageId:progressMessageId,text:'Hasil perlu diperiksa. Lengkapi atau konfirmasi pada pesan berikutnya.'});
+    return;
+  }
 
   // 1. Cross-modality Duplicate Detection Check
   try {
@@ -1252,8 +1273,10 @@ async function processAndDispatchEvent(params: {
           version = session.versions[index];
         }
         if (!matched) throw new Error('Kegiatan lama belum dapat ditentukan secara pasti. Ketik /agenda lalu /update <nomor> <waktu/tempat baru>.');
-        const result = await updateExistingEvent({ owner, eventId: matched.id, expectedVersion: version, update: event.update, calendarId: dbUser?.calendar_id });
-        await finishUpdateNotice(result.message + '\n\n' + result.event.title + '\nWaktu: ' + DateTime.fromISO(result.event.start_time).setZone('Asia/Jakarta').toFormat('dd LLL yyyy HH:mm') + ' WIB\nTempat: ' + (result.event.location || ''));
+        const record=await findOwnedEvent(owner,matched.id);
+        if(!record || (record.lifecycle_version||0)!==version)throw new Error('Kegiatan berubah. Ketik /agenda dan pilih kembali.');
+        await offerUpdateConfirmation({botToken,chatId,userId,owner,record,update:event.update,sources:currentSource(params.fileData)});
+        await finishUpdateNotice('Perubahan terbaca. Periksa semula → menjadi dan konfirmasi pada pesan berikutnya.');
       } catch (error) {
         await finishUpdateNotice(error instanceof Error ? error.message : 'Perubahan belum dapat diproses.');
       }
@@ -1279,7 +1302,7 @@ async function processAndDispatchEvent(params: {
       }
     }
   } catch (err) {
-    console.error('Error during duplicate check in Telegram:', err);
+    console.error('Telegram history lookup failed');
     if (event.update || params.forceUpdate) {
       await finishUpdateNotice('Riwayat kegiatan belum dapat dibaca. Coba kirim perubahan lagi.');
       return;
@@ -1312,7 +1335,7 @@ async function dispatchCalendarResult(params: {
   botToken: string;
   chatId: number;
   userId: number;
-  event: any;
+  event: CalendarEvent;
   hostOrigin: string;
   userAuth?: any;
   dbUser?: any;
@@ -1339,24 +1362,15 @@ async function dispatchCalendarResult(params: {
   // Case A: User has connected Google Calendar (Direct Auto-Sync!)
   if (userAuth && (userAuth.refreshToken || userAuth.google_refresh_token)) {
     const targetUserId = userAuth.userId || userAuth.id || userId;
-    const insertResult = await insertGoogleCalendarEvent(targetUserId, event, calendarId || 'primary');
+    const { insertResult, gdriveResult, attachmentResult } = await syncGoogleCalendarEventWithSource({
+      userId: targetUserId, event, calendarId: calendarId || dbUser?.calendar_id || 'primary', parentFolderId: dbUser?.gdrive_root_folder_id, fileData
+    });
 
-    // Create Google Drive event folder and upload source file (or .txt for text input)
-    let gdriveResult: any = null;
+    // Persist a stable history identity for retries of the same Telegram job.
+    let savedRecord;
     try {
-      gdriveResult = await createEventFolderAndUpload({
-        userId: targetUserId,
-        event,
-        parentFolderId: dbUser?.gdrive_root_folder_id,
-        fileData
-      });
-    } catch (driveErr) {
-      console.error('Failed to create Drive folder / upload in Telegram:', driveErr);
-    }
-
-    // Save event history to Neon DB
-    try {
-      await saveExtractedEvent({
+      savedRecord=await saveExtractedEvent({
+        id:createHash('sha256').update(`${targetUserId}:${telegramContext.getStore()!.operationId}`).digest('hex'),
         user_id: String(targetUserId),
         title: event.title,
         start_time: event.start_time,
@@ -1370,7 +1384,7 @@ async function dispatchCalendarResult(params: {
         description: event.description,
         google_calendar_url: insertResult.htmlLink || event.google_calendar_url,
         google_event_id: insertResult.eventId,
-        google_calendar_id: calendarId || 'primary',
+        google_calendar_id: calendarId || dbUser?.calendar_id || 'primary',
         synced_to_calendar: Boolean(insertResult.success),
         gdrive_folder_id: gdriveResult?.folderId,
         gdrive_folder_url: gdriveResult?.folderUrl,
@@ -1380,7 +1394,7 @@ async function dispatchCalendarResult(params: {
         file_name: fileName || 'Telegram Bot'
       });
     } catch (e) {
-      console.error('Failed to save telegram event in Neon DB:', e);
+      throw new Error('Riwayat kegiatan belum tersimpan.');
     }
 
     if (insertResult.success) {
@@ -1400,7 +1414,11 @@ async function dispatchCalendarResult(params: {
         replyText += `\n⚠️ *Google Drive*: ${gdriveResult.error}\n`;
       }
 
-      const inlineButtons: Array<{ text: string; url?: string }> = [
+      replyText += attachmentResult.attached
+        ? '\nBerkas undangan terlampir di event Google Calendar.\n'
+        : '\nLampiran belum terpasang di event: ' + attachmentResult.error + '\n';
+
+      const inlineButtons: Array<{ text: string; url?: string; callback_data?:string }> = [
         {
           text: '📅 Lihat di Google Calendar',
           url: insertResult.htmlLink || event.google_calendar_url || 'https://calendar.google.com'
@@ -1415,9 +1433,12 @@ async function dispatchCalendarResult(params: {
       } else if (gdriveResult?.error) {
         inlineButtons.push({
           text: '🔑 Otorisasi Google Drive',
-          url: `${hostOrigin}/api/auth/google?user_id=tg_${userId}`
+          url: `${hostOrigin}/api/auth/google?binding=${await createTelegramBinding(userId)}`
         });
       }
+
+      if(!attachmentResult.attached && savedRecord && currentSource()[0])inlineButtons.push(await registerArchiveRecovery({botToken,chatId,userId,owner:{userId:String(targetUserId),email:dbUser?.email||userAuth?.email,telegramChatId:String(userId)},record:savedRecord,source:currentSource()[0],
+        uploaded:gdriveResult.fileId&&gdriveResult.fileUrl?{fileId:gdriveResult.fileId,fileUrl:gdriveResult.fileUrl,fileName:gdriveResult.fileName,mimeType:gdriveResult.mimeType}:undefined}));
 
       if (progressMessageId) {
         const edited = await editTelegramMessage({
@@ -1442,9 +1463,12 @@ async function dispatchCalendarResult(params: {
     }
   }
 
+  if(userAuth && (userAuth.refreshToken||userAuth.google_refresh_token)) {await sendTelegramMessage({botToken,chatId,text:'Agenda belum tersimpan di Google Calendar. Periksa /status atau hubungkan ulang dengan /connect. Riwayat kegagalan tersedia di web.'});return;}
+
   // Case B: User has NOT connected Google Calendar yet (Fallback to 1-Click URL + Connect Link)
   try {
     await saveExtractedEvent({
+      id:createHash('sha256').update(`tg_${userId}:${telegramContext.getStore()!.operationId}`).digest('hex'),
       user_id: `tg_${userId}`,
       title: event.title,
       start_time: event.start_time,
@@ -1462,7 +1486,7 @@ async function dispatchCalendarResult(params: {
       file_name: fileName || 'Telegram Bot'
     });
   } catch (e) {}
-  const authUrl = `${hostOrigin}/api/auth/google?user_id=tg_${userId}`;
+  const authUrl = `${hostOrigin}/api/auth/google?binding=${await createTelegramBinding(userId)}`;
   let replyText = `📋 *Hasil Ekstraksi Agenda Kegiatan:*\n\n` +
     `📌 *Agenda*: ${event.title}\n` +
     `🕒 *Waktu*: ${startFormatted} s.d. ${endFormatted} WIB\n` +

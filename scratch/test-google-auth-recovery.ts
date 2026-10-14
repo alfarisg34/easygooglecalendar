@@ -1,3 +1,4 @@
+import { createLoader } from './test-loader.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -6,14 +7,7 @@ import ts from 'typescript';
 
 const nativeRequire = createRequire(import.meta.url);
 function load<T>(file: string, mocks: Record<string, unknown>, globals: Record<string, unknown> = {}): T {
-  const source = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: {
-    target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, esModuleInterop: true
-  } }).outputText;
-  const module = { exports: {} };
-  vm.runInNewContext(source, { module, exports: module.exports,
-    require: (id: string) => id in mocks ? mocks[id] : nativeRequire(id), Buffer, console,
-    process: { env: {}, cwd: () => '/isolated' }, ...globals }, { filename: file });
-  return module.exports as T;
+  return createLoader(mocks,globals).load<T>(file);
 }
 
 async function main() {
@@ -38,7 +32,7 @@ async function main() {
   const drive = load<typeof import('../lib/google-drive-api')>('lib/google-drive-api.ts', {
     './google-api-error': errors, './token-store': tokenStore, './db': { updateUserGoogleTokens: async () => true },
     './google-auth': { getGoogleOAuth2Client: () => ({ setCredentials: () => {}, on: () => {} }) },
-    googleapis: { google: { drive: () => ({ files: { create: async () => {
+    googleapis: { google: { drive: () => ({ files: {list:async()=>({data:{files:[]}}), create: async () => {
       creates++;
       throw Object.assign(new Error('invalid_grant'), { response: { data: { error: 'invalid_grant' } } });
     } } }) } }
@@ -60,7 +54,8 @@ async function main() {
       assert.equal(args.expectedVersion, 7); selected = args.eventId; updates++;
       return { message: 'Updated', event: { title: 'Rapat', start_time: '2099-10-08T13:00:00+07:00', location: 'Ruang A' } };
     } },
-    './event-lifecycle-store': { readAgendaSession: async (key: string) => {
+    './telegram-workflows':{handleWorkflowInput:async()=>false,currentSource:()=>[],offerUpdateConfirmation:async(args:{record:{id:string;lifecycle_version:number}})=>{assert.equal(args.record.lifecycle_version,7);selected=args.record.id;updates++;}},
+    './event-lifecycle-store': {findOwnedEvent:async()=>({id:'older-event-outside-recent-history',lifecycle_version:7}), readAgendaSession: async (key: string) => {
       const { createHash } = nativeRequire('node:crypto') as typeof import('node:crypto');
       assert.equal(key, createHash('sha256').update('test-bot').digest('hex').slice(0, 16) + ':123:123:google-owner');
       return { ids: ['older-event-outside-recent-history'], versions: [7], status: 'active' };
@@ -84,7 +79,7 @@ async function main() {
   assert.equal(updates, 1); assert.equal(inserts, 0);
   assert.match(messages.at(-1)!.text, /Perubahan belum terbaca/);
   await send('/connect');
-  assert.equal(messages.at(-1)?.reply_markup?.inline_keyboard[0][0].url, 'https://example.com/api/auth/google?user_id=tg_123');
+  assert.match(messages.at(-1)?.reply_markup?.inline_keyboard[0][0].url||'', /^https:\/\/example\.com\/api\/auth\/google\?binding=[a-f0-9]{48}$/);
   console.log('PASS: numbered Telegram update, exact agenda session key/version, no new event on extraction failure, and reconnect button for connected users');
 
   console.log('PASS: fresh token after reconnect, canonical identity, structured invalid_grant, actionable upload error, and no folder retry on invalid authorization');

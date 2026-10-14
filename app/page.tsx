@@ -2,7 +2,7 @@
 
 import AppFooter from './AppFooter';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Calendar, FileText, Image as ImageIcon, MessageSquare, 
   Key, Bot, Code2, Sparkles, Download, Copy, Check, 
@@ -186,7 +186,7 @@ export default function HomePage() {
   const [eventsLimit] = useState<number>(4);
   const [eventsTotal, setEventsTotal] = useState<number>(0);
   const [eventsTotalPages, setEventsTotalPages] = useState<number>(1);
-  const [eventsLoading, setEventsLoading] = useState<boolean>(false);
+  const [eventsLoading, setEventsLoading] = useState<boolean>(true);
   const [eventsStatus, setEventsStatus] = useState<'active' | 'cancelled' | 'all'>('all');
   const [eventsSearch, setEventsSearch] = useState('');
   const [lifecycleEvent, setLifecycleEvent] = useState<ExtractedEventItem | null>(null);
@@ -197,25 +197,28 @@ export default function HomePage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const fetchEventsHistory = async (page: number = 1, status = eventsStatus, search = eventsSearch) => {
+  const loadEventsHistory = useCallback((page: number, status: string, search: string, signal?: AbortSignal) => {
     const request = ++historyRequest.current;
-    try {
-      setEventsLoading(true);
-      const res = await fetch(`/api/events?page=${page}&limit=${eventsLimit}&status=${status}&search=${encodeURIComponent(search)}`);
+    return fetch(`/api/events?page=${page}&limit=${eventsLimit}&status=${status}&search=${encodeURIComponent(search)}`, { signal }).then(async res => {
       if (res.ok) {
         const data = await res.json();
-        if (data.success && request === historyRequest.current) {
+        if (data.success && request === historyRequest.current && !signal?.aborted) {
           setEventsList(data.events || []);
           setEventsTotal(data.total || 0);
           setEventsPage(data.page || 1);
           setEventsTotalPages(data.totalPages || 1);
         }
       }
-    } catch (err) {
-      console.error('Failed to fetch events history:', err);
-    } finally {
-      if (request === historyRequest.current) setEventsLoading(false);
-    }
+    }).catch(err => {
+      if (!signal?.aborted) console.error('Failed to fetch events history:', err);
+    }).finally(() => {
+      if (request === historyRequest.current && !signal?.aborted) setEventsLoading(false);
+    });
+  }, [eventsLimit]);
+
+  const fetchEventsHistory = (page: number = 1, status = eventsStatus, search = eventsSearch) => {
+    setEventsLoading(true);
+    return loadEventsHistory(page, status, search);
   };
 
   const handleLifecycleChange = async (item: ExtractedEventItem, action: 'cancel' | 'restore' | 'retry', reason = '') => {
@@ -271,55 +274,61 @@ export default function HomePage() {
     document.body.removeChild(link);
   };
 
-  // Check auth on load
-  const fetchSession = async () => {
-    try {
-      setAuthLoading(true);
-      if (typeof window !== 'undefined') {
-        const params = new URLSearchParams(window.location.search);
-        const errParam = params.get('auth_error');
-        if (errParam) {
-          setAuthError(decodeURIComponent(errParam));
-        }
-      }
-      const res = await fetch('/api/auth/me');
-      const data = await res.json();
-      if (data.authenticated && data.user) {
-        setUser(data.user);
-        setSettingsForm({
-          phoneNumber: data.user.settings?.phoneNumber || '',
-          geminiApiKey: data.user.settings?.geminiApiKey || '',
-          modelName: data.user.settings?.modelName || 'gemini-3.6-flash',
-          ocrEngine: data.user.settings?.ocrEngine || 'gemini',
-          ocrServiceUrl: data.user.settings?.ocrServiceUrl || '',
-          calendarId: data.user.settings?.calendarId || 'primary',
-          gdriveRootFolderUrl: data.user.settings?.gdriveRootFolderUrl || data.user.settings?.gdriveRootFolderId || '',
-          telegramBotToken: data.user.settings?.telegramBotToken || '',
-          telegramChatId: data.user.settings?.telegramChatId || ''
-        });
-      } else {
-        setUser(null);
-      }
-      if (data.dbStatus) {
-        setDbStatus(data.dbStatus);
-      }
-    } catch (err) {
-      console.error('Failed to fetch session:', err);
-      setUser(null);
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
+  // Initial effects only update state after their external requests complete.
   useEffect(() => {
-    fetchSession();
+    let active = true;
+    const fetchSession = async () => {
+      try {
+        const res = await fetch('/api/auth/me');
+        const data = await res.json();
+        if (!active) return;
+        if (typeof window !== 'undefined') {
+          const params = new URLSearchParams(window.location.search);
+          const errParam = params.get('auth_error');
+          if (errParam) {
+            setAuthError(decodeURIComponent(errParam));
+          }
+        }
+        if (data.authenticated && data.user) {
+          setUser(data.user);
+          setSettingsForm({
+            phoneNumber: data.user.settings?.phoneNumber || '',
+            geminiApiKey: data.user.settings?.geminiApiKey || '',
+            modelName: data.user.settings?.modelName || 'gemini-3.6-flash',
+            ocrEngine: data.user.settings?.ocrEngine || 'gemini',
+            ocrServiceUrl: data.user.settings?.ocrServiceUrl || '',
+            calendarId: data.user.settings?.calendarId || 'primary',
+            gdriveRootFolderUrl: data.user.settings?.gdriveRootFolderUrl || data.user.settings?.gdriveRootFolderId || '',
+            telegramBotToken: data.user.settings?.telegramBotToken || '',
+            telegramChatId: data.user.settings?.telegramChatId || ''
+          });
+        } else {
+          setUser(null);
+        }
+        if (data.dbStatus) {
+          setDbStatus(data.dbStatus);
+        }
+      } catch (err) {
+        if (!active) return;
+        console.error('Failed to fetch session:', err);
+        setUser(null);
+      } finally {
+        if (active) setAuthLoading(false);
+      }
+    };
+
+    void fetchSession();
+    return () => { active = false; };
   }, []);
 
+  const authenticatedUserId = user?.id;
   useEffect(() => {
-    if (user) {
-      fetchEventsHistory(1);
+    const controller = new AbortController();
+    if (authenticatedUserId) {
+      void loadEventsHistory(1, 'all', '', controller.signal);
     }
-  }, [user]);
+    return () => { controller.abort(); };
+  }, [authenticatedUserId, loadEventsHistory]);
 
   const handleLogout = async () => {
     if (!confirm('Apakah Anda yakin ingin keluar dari akun?')) return;
@@ -490,6 +499,12 @@ export default function HomePage() {
 
       setExtractProgress(100);
 
+      if(data.requiresConfirmation) {
+        setExtractedEvent(null);setAutoSyncResult(null);setGdriveResult(null);
+        setErrorMessage(`${data.message}\n${data.event?.validation_warnings?.join(' ')||''}`);
+        return;
+      }
+
       if (data.isDuplicate) {
         setStatusMessage('Pemberitahuan: Data kegiatan ini sudah pernah diproses sebelumnya!');
         setDuplicateWarning({
@@ -547,15 +562,11 @@ export default function HomePage() {
     setTgStatus({ loading: true, info: undefined, error: undefined });
     try {
       const cleanToken = settingsForm.telegramBotToken.trim();
-      const origin = window.location.origin;
-      const webhookUrl = `${origin}/api/telegram${cleanToken ? `?bot_token=${encodeURIComponent(cleanToken)}` : ''}${settingsForm.geminiApiKey ? `&gemini_key=${encodeURIComponent(settingsForm.geminiApiKey.trim())}` : ''}`;
-
       const res = await fetch('/api/telegram/setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           botToken: cleanToken || undefined,
-          webhookUrl,
           action: 'set_webhook'
         })
       });
@@ -563,7 +574,7 @@ export default function HomePage() {
       if (data.ok) {
         setTgStatus({ 
           loading: false, 
-          info: `🎉 Webhook Telegram Berhasil Disinkronkan ke Domain Ini!\n\n🔗 URL: ${data.configuredWebhookUrl || webhookUrl}\n\nSekarang buka bot Telegram Anda dan kirim pesan apa saja!` 
+          info: `🎉 Webhook Telegram Berhasil Disinkronkan ke Domain Ini!\n\n🔗 URL: ${data.configuredWebhookUrl || '(URL tersimpan aman di server)'}\n\nSekarang buka bot Telegram Anda dan kirim pesan apa saja!`
         });
       } else {
         setTgStatus({ 
@@ -992,7 +1003,7 @@ export default function HomePage() {
                       </div>
                       <ol style={{ paddingLeft: '1.25rem', margin: 0, color: 'var(--text-main)', lineHeight: 1.75 }}>
                         <li>Buka tautan resmi: <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--signal-blue)', textDecoration: 'underline' }}>Google AI Studio (aistudio.google.com)</a>.</li>
-                        <li>Login dengan akun Google Anda dan klik tombol biru <strong>"Create API key"</strong>.</li>
+                        <li>Login dengan akun Google Anda dan klik tombol biru <strong>&quot;Create API key&quot;</strong>.</li>
                         <li>Salin kunci API yang dihasilkan (diawali dengan <code>AIzaSy...</code>).</li>
                         <li>Masuk ke tab <strong>Pengaturan & Kredensial</strong> di EasyCal, tempelkan kunci Anda, lalu klik <strong>Simpan Pengaturan</strong>.</li>
                       </ol>
@@ -1635,6 +1646,14 @@ export default function HomePage() {
                   </div>
                 )}
 
+                {autoSyncResult?.synced && autoSyncResult.attachmentResult && (
+                  <p role="status" className={`calendar-attachment-status ${autoSyncResult.attachmentResult.attached ? 'is-attached' : ''}`}>
+                    {autoSyncResult.attachmentResult.attached
+                      ? 'Berkas undangan terlampir di event Google Calendar.'
+                      : `Event tersimpan. Lampiran belum terpasang: ${autoSyncResult.attachmentResult.error}`}
+                  </p>
+                )}
+
                 {/* Google Drive Status Alert if folder creation failed */}
                 {gdriveResult && !gdriveResult.folderUrl && gdriveResult.error && (
                   <div style={{
@@ -2020,7 +2039,7 @@ export default function HomePage() {
                     placeholder="Contoh: 081234567890 atau +6281234567890"
                   />
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginTop: 4 }}>
-                    Digunakan sebagai pengenal akun saat Anda chat di Telegram. Cukup klik tombol <strong>"📱 Bagikan Kontak Saya"</strong> di bot Telegram untuk menghubungkan secara instan.
+                    Digunakan sebagai pengenal akun saat Anda chat di Telegram. Cukup klik tombol <strong>&quot;📱 Bagikan Kontak Saya&quot;</strong> di bot Telegram untuk menghubungkan secara instan.
                   </div>
                 </div>
 
@@ -2168,14 +2187,14 @@ export default function HomePage() {
                     <span style={{ color: 'var(--text-faint)' }}>Dari @BotFather</span>
                   </div>
                   <input 
-                    type="text"
+                    type="password"
                     className="form-control"
                     value={settingsForm.telegramBotToken}
                     onChange={(e) => setSettingsForm({ ...settingsForm, telegramBotToken: e.target.value })}
                     placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
                   />
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginTop: 4 }}>
-                    Diperlukan jika Anda ingin bot Telegram sendiri yang langsung terhubung ke aplikasi Anda.
+                    Simpan token terlebih dahulu, lalu pasang webhook dari tab Telegram. Hanya pemilik token tersimpan atau admin bot yang dapat mengubah webhook.
                   </div>
                 </div>
 
@@ -2202,7 +2221,7 @@ export default function HomePage() {
                     {settingsForm.telegramChatId ? (
                       <>Akun Telegram Anda aktif terhubung dengan Chat ID: <code>{settingsForm.telegramChatId}</code>. Pengaturan web yang disimpan kini secara otomatis melindungi dan mempertahankan koneksi ini agar tidak terputus.</>
                     ) : (
-                      <>Akun Telegram belum terhubung. Buka bot <strong>@pdftogooglecalendarinvitationbot</strong> di Telegram, kirimkan surat/undangan, lalu klik tombol <strong>"⚡ Hubungkan Akun (Auto-Sync)"</strong> untuk menghubungkan akun Google Anda secara permanen.</>
+                      <>Akun Telegram belum terhubung. Buka bot <strong>@pdftogooglecalendarinvitationbot</strong> di Telegram, kirimkan surat/undangan, lalu klik tombol <strong>&quot;⚡ Hubungkan Akun (Auto-Sync)&quot;</strong> untuk menghubungkan akun Google Anda secara permanen.</>
                     )}
                   </div>
                 </div>
@@ -2292,9 +2311,9 @@ export default function HomePage() {
                 <ol style={{ paddingLeft: '1.25rem', fontSize: '0.85rem', color: 'var(--text-dim)', lineHeight: 1.8 }}>
                   <li>Isi <strong>Nomor WhatsApp / HP</strong> dan <strong>Google Gemini API Key</strong> Anda pada tab <strong>Pengaturan & Kredensial</strong>, lalu klik <strong>Simpan Konfigurasi</strong>.</li>
                   <li>Buka chat bot <a href="https://t.me/pdftogooglecalendarinvitationbot" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--signal-blue)' }}>@pdftogooglecalendarinvitationbot</a> di aplikasi Telegram Anda.</li>
-                  <li>Tekan tombol <strong>"📱 Bagikan Kontak Saya"</strong> untuk verifikasi nomor HP instan (atau ketik <code>/connect</code>).</li>
+                  <li>Tekan tombol <strong>&quot;📱 Bagikan Kontak Saya&quot;</strong> untuk verifikasi nomor HP instan (atau ketik <code>/connect</code>).</li>
                   <li>Kirimkan berkas surat dinas PDF atau poster flyer ke bot kapan saja untuk penjadwalan otomatis! 🚀</li>
-                  <li style={{ color: 'var(--text-faint)', marginTop: 4 }}><em>(Opsional)</em> Jika Anda ingin menggunakan bot Telegram kustom sendiri, isi Token dari @BotFather di Pengaturan lalu klik tombol "Pasang Webhook Otomatis" di bawah.</li>
+                  <li style={{ color: 'var(--text-faint)', marginTop: 4 }}><em>(Opsional)</em> Jika Anda ingin menggunakan bot Telegram kustom sendiri, isi Token dari @BotFather di Pengaturan lalu klik tombol &quot;Pasang Webhook Otomatis&quot; di bawah.</li>
                 </ol>
               </div>
 

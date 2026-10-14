@@ -1,6 +1,17 @@
 # Development Guidelines & Engineering Rules
 ## EasyCal // Engineering Handbook & Standards
 
+### Ketentuan P0/P1 bot
+
+- Webhook wajib memvalidasi secret header sebelum menyimpan pekerjaan. Setup memerlukan pemilik token/admin dan Origin yang sesuai; jangan memasukkan bot token/Gemini key pada URL webhook atau log. Mutasi pengaturan tidak boleh lewat GET.
+- Binding Telegram harus berasal dari kontak pengirim sendiri atau token OAuth sekali pakai dengan state/cookie browser yang valid. Jangan menerima perubahan Chat ID lewat pengaturan web atau identitas pemilik unggahan dari input request.
+- Antrean/OAuth produksi wajib persisten dan state bot terenkripsi; jangan fallback ke file lokal saat database gagal. Klaim pekerjaan/aksi harus atomik, ber-lease, dan memiliki batas percobaan. Operasi eksternal harus memakai identitas stabil/deduplikasi yang sesuai; jangan mengklaim transaksi exactly-once lintas layanan.
+- Waktu mulai yang hilang tidak boleh diisi besok. Nilai waktu yang diasumsikan perlu konfirmasi. Perubahan waktu/tempat wajib menampilkan semula/menjadi dan memeriksa kepemilikan/versi saat konfirmasi; arsip revisi serta status lampirannya dipisahkan dari keberhasilan perubahan kalender.
+- Album dokumentasi harus memiliki satu pilihan tujuan/ringkasan, dengan batas penampungan dan penjelasan anggota terlambat. Foto tanpa waktu tidak boleh memakai waktu unggah sebagai bukti pengambilan.
+- Jalankan `npm run lint`, `npm test`, `npm run typecheck`, build, dan diff check. Suite harus terisolasi dari kredensial/layanan produksi; perubahan kontrak harus memperbarui tes perilaku yang relevan. ESLint CLI memakai preset Next.js Core Web Vitals; pemeriksaan tipe tetap dilakukan terpisah.
+
+Konfigurasi dan batas implementasi mengikuti [Telegram.md](Telegram.md).
+
 ---
 
 ## 1. General Development Philosophy
@@ -66,6 +77,8 @@ Proyek **EasyCal** mematuhi standar rekayasa perangkat lunak modern untuk aplika
 
 ---
 
+Lampiran Calendar wajib memakai metadata berkas yang berhasil diunggah oleh backend ke Drive. PATCH lampiran harus menyertakan supportsAttachments: true, mempertahankan daftar lampiran lama, mencegah duplikasi dan melampaui 25 berkas, serta memakai ETag untuk menghindari penimpaan perubahan bersamaan. Kegagalan arsip/lampiran tidak boleh memicu pembuatan ulang event yang sudah tersimpan. Jangan mengubah izin berbagi Drive menjadi publik secara otomatis.
+
 ## 6. Google Gemini Multimodal Prompting Rules
 
 * **Strict JSON Response**: Parameter konfigurasi pemanggilan Gemini AI harus selalu mengaktifkan:
@@ -77,7 +90,7 @@ Proyek **EasyCal** mematuhi standar rekayasa perangkat lunak modern untuk aplika
   ```
 * **Sanitasi Output AI**: Gunakan fungsi `parseGeminiJson` untuk membersihkan *code fence* (` ```json `) atau teks penjelasan pengantar sebelum melakukan `JSON.parse()`.
 * **Standarisasi Zona Waktu**: Seluruh waktu pelaksanaan wajib dinormalisasi ke format ISO 8601 dengan offset Indonesia (+07:00 / `Asia/Jakarta`).
-* **Durasi Default "s.d. Selesai"**: Jika dokumen menuliskan jam akhir "s.d. selesai", otomatis tetapkan durasi default 2 jam setelah waktu mulai.
+* **Durasi Default "s.d. Selesai"**: Jika jam akhir tidak terbaca atau dokumen menuliskan "s.d. selesai", tetapkan durasi 2 jam sebagai asumsi yang wajib dikonfirmasi sebelum penyimpanan. Tanggal/jam mulai yang tidak valid tetap kosong, tidak diganti besok.
 * **Model Fallback Chain**: Jika model primer gagal dengan status HTTP 404, 429, atau 503, pemanggilan wajib otomatis dialihkan ke model berikutnya dalam daftar cadangan (`gemini-3.6-flash` -> `gemini-3.5-flash` -> `gemini-3.1-flash-lite`).
 
 ---
@@ -96,7 +109,7 @@ Proyek **EasyCal** mematuhi standar rekayasa perangkat lunak modern untuk aplika
 
 * **Markdown Parsing Fallback**: Jika pemanggilan `sendMessage` atau `editMessageText` dengan `parse_mode: 'Markdown'` menghasilkan error dari Telegram (biasanya karena karakter khusus `_`, `*`, `[` di dalam teks judul rapat), sistem **wajib** secara otomatis mencoba kirim ulang (*retry*) tanpa `parse_mode` (sebagai teks biasa).
 * **Pemberhentian Timer Animasi**: Setiap instance animasi progress bar Telegram (`startTelegramProgressBar`) wajib ditutup dengan `await progressTracker.stop()` segera setelah proses AI selesai atau ketika error tertangkap. Tunggu edit progress yang sedang berlangsung sebelum menulis hasil akhir agar animasi tidak menimpanya. Alur berhasil, gagal, dan pemilihan yang tidak valid harus menyelesaikan pesan progress; jika edit ditolak Telegram, kirim hasil sebagai pesan baru.
-* **1-Tap Contact Verification**: Saat menerima `msg.contact`, nomor telepon harus dinormalisasi (contoh: `+62812...` atau `0812...` -> `62812...`) sebelum dicocokkan ke database.
+* **1-Tap Contact Verification**: Saat menerima `msg.contact`, hanya chat pribadi dan kontak dengan `contact.user_id === msg.from.id` yang boleh diproses. Nomor telepon harus dinormalisasi (contoh: `+62812...` atau `0812...` -> `62812...`) sebelum dicocokkan ke database.
 
 ---
 
@@ -128,7 +141,7 @@ Proyek **EasyCal** mematuhi standar rekayasa perangkat lunak modern untuk aplika
 Pembaruan dokumentasi dan changelog pada bagian 11 wajib diselesaikan sebelum commit atau deploy.
 
 Sebelum mengajukan perubahan kode:
-1. Jalankan `npm run lint` untuk memastikan tidak ada kesalahan linter atau sintaks TypeScript.
+1. Jalankan `npm run lint` melalui ESLint CLI dengan konfigurasi `eslint.config.mjs`, serta `npm run typecheck` untuk pemeriksaan tipe. Jangan memakai `next lint` yang sudah dihapus pada Next.js 16.
 2. Jalankan `npm run build` untuk memverifikasi bahwa *type checking* lolos dan seluruh Route Handler dapat di-bundle tanpa error.
 3. Uji alur ekstraksi utama dengan contoh naskah surat dinas dan pastikan entitas tanggal, lokasi, serta nomor dinas terbaca akurat.
 4. Uji alur pengunggahan foto dokumentasi dan pastikan foto tersimpan di sub-folder Google Drive yang tepat tanpa menduplikasi agenda kalender.
@@ -144,4 +157,12 @@ Sebelum mengajukan perubahan kode:
 4. Dokumentasi harus menggambarkan implementasi yang tersedia. Bedakan perilaku web dan Telegram, pengujian tiruan dan layanan nyata, serta perubahan lokal dan rilis yang sudah di-deploy.
 5. Jalankan pemeriksaan yang sesuai serta `git diff --check`. Jika pemeriksaan gagal atau belum dilakukan, catat secara eksplisit; jangan menyatakannya lulus.
 6. Selesaikan pembaruan ini sebelum pekerjaan dinyatakan selesai dan sebelum commit, push, atau deploy. Saat tindakan tersebut diizinkan pengguna, sertakan dokumentasi dan changelog bersama perubahan kode.
+
+### Permintaan push berarti rilis
+
+Ketika pengguna meminta push Git, ikuti [alur wajib di AGENTS.md](AGENTS.md): tinjau perubahan, perbarui dokumentasi yang terdampak dan `.gitignore`, tentukan/selaraskan versi, siapkan catatan rilis dari `Unreleased`, jalankan pemeriksaan, lalu commit serta push branch/tag rilis. Periksa staging agar tidak menyertakan kredensial, cache, laporan, atau percobaan lokal. Permintaan tersebut mencakup langkah rilis terkait; tidak perlu meminta ulang izin rutin. Aturan ini tidak memulai push tanpa permintaan pengguna dan tidak menjadikan keberhasilan push sebagai bukti deployment produksi.
+
+### Berkas yang disertakan dalam Git
+
+Pertahankan tes regresi `scratch/test-*.ts`, loader, runner, worker dan tes unit lain yang diperlukan; jangan mengabaikan seluruh folder scratch. Tempatkan percobaan baru di `scratch/local/` dan hasil pemeriksaan di lokasi laporan/cache yang diabaikan. Empat percobaan lama `test-36.js`, `test-gemini.js`, `test-models.js`, dan `verify.js` tetap boleh ada secara lokal tetapi tidak dilacak. Kredensial/state lokal, environment selain `.env.example`, cache, build, laporan QA dan file sementara mengikuti `.gitignore`. Jika file sudah dilacak, hentikan pelacakannya tanpa menghapus salinan lokal ketika memang tidak diperlukan dalam repositori.
 

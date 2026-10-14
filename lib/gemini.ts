@@ -1,3 +1,6 @@
+import { telegramContext } from './telegram-context';
+import { safeError } from './safe-error';
+import { DateTime } from 'luxon';
 import { CalendarEvent, ExtractionRequest, ExtractionResponse } from './types';
 import { buildGoogleCalendarUrl } from './calendar-builder';
 import { callCustomOcrService } from './ocr-service';
@@ -31,27 +34,33 @@ export function parseGeminiJson(rawResponseText: string): any {
  * Normalizes and validates extracted event data to produce a robust CalendarEvent
  */
 export function normalizeCalendarEvent(raw: any): CalendarEvent {
-  const now = new Date();
+  const warnings:string[]=Array.isArray(raw.validation_warnings)?raw.validation_warnings.filter((value:unknown):value is string=>typeof value==='string').slice(0,5).map((value:string)=>value.slice(0,200)):[];
+  if(raw.needs_confirmation===true&&!warnings.length)warnings.push('Hasil ekstraksi mengandung asumsi yang perlu diperiksa.');
   
   // Validate start_time and end_time
   let startDate: Date;
   if (raw.start_time) {
-    startDate = new Date(raw.start_time);
+    const parsed=typeof raw.start_time==='string'&&/T\d{2}:\d{2}/.test(raw.start_time)?DateTime.fromISO(raw.start_time,{zone:'Asia/Jakarta',setZone:true}):null;
+    startDate=parsed?.isValid?parsed.toJSDate():new Date(NaN);
     if (isNaN(startDate.getTime())) {
-      startDate = new Date(now.getTime() + 86400000); // Tomorrow default
+      warnings.push('Tanggal/jam mulai tidak valid; wajib dilengkapi.');
     }
   } else {
-    startDate = new Date(now.getTime() + 86400000);
+    startDate = new Date(NaN);
+    warnings.push('Tanggal/jam mulai belum terbaca; wajib dilengkapi.');
   }
 
   let endDate: Date;
   if (raw.end_time) {
-    endDate = new Date(raw.end_time);
+    const parsed=typeof raw.end_time==='string'&&/T\d{2}:\d{2}/.test(raw.end_time)?DateTime.fromISO(raw.end_time,{zone:'Asia/Jakarta',setZone:true}):null;
+    endDate=parsed?.isValid?parsed.toJSDate():new Date(NaN);
     if (isNaN(endDate.getTime()) || endDate <= startDate) {
       endDate = new Date(startDate.getTime() + 2 * 3600000); // 2 hours duration default
+      warnings.push('Jam selesai diasumsikan 2 jam setelah mulai.');
     }
   } else {
     endDate = new Date(startDate.getTime() + 2 * 3600000);
+    warnings.push('Jam selesai diasumsikan 2 jam setelah mulai.');
   }
 
   // Format JP text
@@ -60,6 +69,7 @@ export function normalizeCalendarEvent(raw: any): CalendarEvent {
   // Format Location
   let locationStr = (raw.location || '').trim();
   if (!locationStr) {
+    if(!raw.is_online || !raw.meeting_link)warnings.push('Tempat/link kegiatan belum jelas; periksa sebelum menyimpan.');
     locationStr = raw.is_online ? 'Zoom Meeting' : 'Menyusul / Sesuai Undangan';
   }
   if (raw.is_online && raw.meeting_id_pass && !locationStr.includes(raw.meeting_id_pass)) {
@@ -73,10 +83,12 @@ export function normalizeCalendarEvent(raw: any): CalendarEvent {
   }
 
   // Build clean event
+  if(typeof raw.title!=='string'||!raw.title.trim())warnings.push('Judul kegiatan belum terbaca; periksa sebelum menyimpan.');
   const event: CalendarEvent = {
     title: (raw.title || 'Agenda Kegiatan / Rapat').trim(),
-    start_time: startDate.toISOString(),
-    end_time: endDate.toISOString(),
+    start_time: Number.isNaN(startDate.getTime()) ? '' : startDate.toISOString(),
+    end_time: Number.isNaN(endDate.getTime()) ? '' : endDate.toISOString(),
+    ...(warnings.length ? {validation_warnings:warnings,needs_confirmation:true} : {}),
     is_online: Boolean(raw.is_online),
     location: locationStr,
     meeting_link: (raw.meeting_link || '').trim(),
@@ -86,7 +98,7 @@ export function normalizeCalendarEvent(raw: any): CalendarEvent {
     description: (raw.description || '').trim()
   };
 
-  event.google_calendar_url = buildGoogleCalendarUrl(event);
+  event.google_calendar_url = event.start_time && event.end_time ? buildGoogleCalendarUrl(event) : '';
   return event;
 }
 
@@ -144,6 +156,7 @@ export async function extractEventFromSource(request: ExtractionRequest): Promis
     const promptText = `Analisis ${request.sourceType === 'pdf' ? 'seluruh halaman dokumen surat undangan dinas / kegiatan resmi' : 'poster / flyer kegiatan'} bahasa Indonesia ini secara visual dan teliti, lalu ekstrak seluruh informasi kegiatan ke dalam format JSON murni:
 
 Waktu Referensi Saat Ini: ${nowISO}
+Jangan mengarang tanggal atau jam. Jika waktu mulai tidak disebutkan atau tidak dapat dibaca, isi start_time dan end_time dengan null. Tanggal acuan hanya untuk menafsirkan narasi relatif yang benar-benar ada. Jika jam akhir diasumsikan (termasuk s.d. selesai), tambahkan needs_confirmation: true dan validation_warnings: ["Jam selesai diasumsikan 2 jam setelah mulai."]. Tandai asumsi judul, tempat atau waktu lain dengan peringatan dan needs_confirmation: true.
 
 ${EVENT_UPDATE_INSTRUCTIONS}
 
@@ -226,6 +239,7 @@ async function extractFromTextContent(params: {
   const promptText = `Analisis pesan chat undangan dinas / pengumuman kegiatan / hasil OCR dokumen bahasa Indonesia berikut dan ekstrak seluruh informasi kegiatan ke dalam format JSON murni:
 
 Waktu Referensi Saat Ini: ${nowISO}
+Jangan mengarang tanggal atau jam. Jika waktu mulai tidak disebutkan atau tidak dapat dibaca, isi start_time dan end_time dengan null. Tanggal acuan hanya untuk menafsirkan narasi relatif yang benar-benar ada. Jika jam akhir diasumsikan (termasuk s.d. selesai), tambahkan needs_confirmation: true dan validation_warnings: ["Jam selesai diasumsikan 2 jam setelah mulai."]. Tandai asumsi judul, tempat atau waktu lain dengan peringatan dan needs_confirmation: true.
 
 ${EVENT_UPDATE_INSTRUCTIONS}
 
@@ -310,6 +324,7 @@ async function callGeminiGenerateContent(params: {
     try {
       const response = await fetch(url, {
         method: 'POST',
+        signal:AbortSignal.timeout(18000),
         headers: {
           'Content-Type': 'application/json'
         },
@@ -329,9 +344,10 @@ async function callGeminiGenerateContent(params: {
       const data = await response.json();
 
       if (!response.ok) {
-        const errorMsg = data.error?.message || `Google Gemini API Error (${response.status}): ${response.statusText}`;
+        const errorMsg = safeError(data.error?.message || `Google Gemini API Error (${response.status}): ${response.statusText}`);
         console.warn(`Gemini API returned HTTP ${response.status} with model ${currentModel}: ${errorMsg}. Trying next active model in chain...`);
         lastError = errorMsg;
+        if(response.status===429||response.status>=500) {const context=telegramContext.getStore();if(context)context.retryableFailure=true;}
 
         // If error is 404 (model unavailable), 429 (rate-limit / quota on this model), or 503 (temporary high demand), try next active model!
         if (response.status === 404 || response.status === 429 || response.status === 503) {
@@ -358,6 +374,7 @@ async function callGeminiGenerateContent(params: {
           error: parsedJson.error || 'Berkas terdeteksi sebagai foto dokumentasi fisik kegiatan, bukan poster undangan agenda.'
         };
       }
+      const context=telegramContext.getStore();if(context)context.retryableFailure=false;
       const event = normalizeCalendarEvent(parsedJson);
       if (parsedJson.update && typeof parsedJson.update === 'object' && !Array.isArray(parsedJson.update)) event.update = parsedJson.update;
 
@@ -369,8 +386,9 @@ async function callGeminiGenerateContent(params: {
         engineUsed: params.engineUsed || 'gemini'
       };
     } catch (err: any) {
-      lastError = err.message;
-      console.warn(`Network error with model ${currentModel}: ${err.message}.`);
+      lastError = safeError(err);
+      const context=telegramContext.getStore();if(context)context.retryableFailure=true;
+      console.warn(`Network error with model ${currentModel}: ${safeError(err)}.`);
     }
   }
 

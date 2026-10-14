@@ -1,6 +1,7 @@
 import { neon, neonConfig } from '@neondatabase/serverless';
 import fs from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
 
 export interface UserRecord {
   id: string; // e.g. "google_12345678" or email
@@ -222,7 +223,7 @@ export async function initDatabase(): Promise<boolean> {
     dbInitialized = true;
     return true;
   } catch (err) {
-    console.error('Failed to initialize Neon PostgreSQL database:', err);
+    console.error('Failed to initialize Neon PostgreSQL database:');
     return false;
   }
 }
@@ -271,7 +272,7 @@ export async function getUserById(id: string): Promise<UserRecord | null> {
       }
       return null;
     } catch (err) {
-      console.error('Neon DB getUserById error:', err);
+      console.error('Neon DB getUserById error:');
     }
   }
 
@@ -302,18 +303,19 @@ export async function getUserByTelegram(params: {
         SELECT * FROM users 
         WHERE telegram_chat_id = ${rawId} 
            OR telegram_chat_id = ${tgId}
-           OR id = ${rawId}
-           OR id = ${tgId}
-        LIMIT 1
+        LIMIT 2
       `;
+      if(rows.length>1)return null;
       if (rows && rows.length > 0 && rows[0].google_refresh_token) {
         return rows[0] as UserRecord;
       }
+      return null;
     } catch (err) {
-      console.error('Neon DB getUserByTelegram error:', err);
+      console.error('Neon DB getUserByTelegram error:');
     }
   }
 
+  if(process.env.NODE_ENV==='production')return null;
   // Local fallback
   if (rawId) {
     const byId = await getUserById(rawId);
@@ -345,7 +347,7 @@ export async function getUserByPhone(phoneNumber: string): Promise<UserRecord | 
       `;
       if (rows && rows.length > 0) return rows[0] as UserRecord;
     } catch (err) {
-      console.error('Neon DB getUserByPhone error:', err);
+      console.error('Neon DB getUserByPhone error:');
     }
   }
 
@@ -385,6 +387,8 @@ export async function linkTelegramUserByPhone(params: {
     try {
       await initDatabase();
       const sql = neon(dbUrl);
+      const matches=await sql`SELECT id FROM users WHERE phone_number=${normPhone} OR phone_number=${'+'+normPhone} OR phone_number=${'0'+normPhone.replace(/^62/,'')} OR REGEXP_REPLACE(phone_number,'[^0-9]','','g')=${normPhone}`;
+      if(matches.length!==1)return null;
       const updated = await sql`
         UPDATE users 
         SET telegram_chat_id = ${rawId},
@@ -395,17 +399,20 @@ export async function linkTelegramUserByPhone(params: {
           OR phone_number = ${'0' + normPhone.replace(/^62/, '')}
           OR REGEXP_REPLACE(phone_number, '[^0-9]', '', 'g') = ${normPhone}
         )
+        AND (telegram_chat_id IS NULL OR telegram_chat_id='' OR telegram_chat_id=${rawId} OR telegram_chat_id=${tgId})
         RETURNING *;
       `;
       if (updated && updated.length > 0) return updated[0] as UserRecord;
+      return null;
     } catch (err) {
-      console.error('Neon DB linkTelegramUserByPhone error:', err);
+      console.error('Neon DB linkTelegramUserByPhone failed');
+      return null;
     }
   }
 
   // Local fallback
   const user = await getUserByPhone(normPhone);
-  if (user) {
+  if (user && (!user.telegram_chat_id || user.telegram_chat_id===rawId || user.telegram_chat_id===tgId)) {
     user.telegram_chat_id = rawId;
     user.updated_at = now;
     const local = getLocalUsers();
@@ -418,6 +425,31 @@ export async function linkTelegramUserByPhone(params: {
   }
 
   return null;
+}
+
+/** Only call after a self-contact check or a consumed one-time OAuth binding. */
+export async function bindVerifiedTelegramAccount(userId:string,telegramId:string):Promise<void> {
+  if(!/^\d+$/.test(telegramId))throw new Error('ID Telegram tidak valid.');
+  const url=getDatabaseUrl();
+  if(url) {
+    if(!await initDatabase())throw new Error('Database belum tersedia.');
+    const sql=neon(url);
+    const results=await sql.transaction([
+      sql`SELECT pg_advisory_xact_lock(hashtext(${`telegram:${telegramId}`}))`,
+      sql`UPDATE users SET telegram_chat_id=NULL WHERE (telegram_chat_id=${telegramId} OR telegram_chat_id=${`tg_${telegramId}`}) AND id<>${userId}`,
+      sql`UPDATE users SET telegram_chat_id=${telegramId},updated_at=NOW() WHERE id=${userId} RETURNING id`
+    ]);
+    if(!results[2].length)throw new Error('Akun tidak ditemukan.');
+    return;
+  }
+  if(process.env.NODE_ENV==='production')throw new Error('Database persisten wajib.');
+  const users=getLocalUsers();
+  for(const user of Object.values(users)) {
+    if(user.id===userId)user.telegram_chat_id=telegramId;
+    else if(user.telegram_chat_id===telegramId||user.telegram_chat_id===`tg_${telegramId}`)user.telegram_chat_id=undefined;
+    memoryUserMap.set(user.id,user);memoryUserMap.set(user.email,user);
+  }
+  saveLocalUsers(users);
 }
 
 /**
@@ -438,7 +470,7 @@ export async function getBotAdminSettings(botToken?: string): Promise<UserRecord
       `;
       if (rows && rows.length > 0) return rows[0] as UserRecord;
     } catch (err) {
-      console.error('Neon DB getBotAdminSettings error:', err);
+      console.error('Neon DB getBotAdminSettings error:');
     }
   }
 
@@ -478,7 +510,7 @@ export async function disconnectTelegramUser(tgUserId: string | number): Promise
       `;
       return true;
     } catch (err) {
-      console.error('Neon DB disconnectTelegramUser error:', err);
+      console.error('Neon DB disconnectTelegramUser error:');
     }
   }
 
@@ -502,7 +534,7 @@ export async function getUserByEmail(email: string): Promise<UserRecord | null> 
       }
       return null;
     } catch (err) {
-      console.error('Neon DB getUserByEmail error:', err);
+      console.error('Neon DB getUserByEmail error:');
     }
   }
 
@@ -570,7 +602,7 @@ export async function upsertGoogleUser(params: {
 
       return updated[0] as UserRecord;
     } catch (err) {
-      console.error('Neon DB upsertGoogleUser error:', err);
+      console.error('Neon DB upsertGoogleUser error:');
     }
   }
 
@@ -671,7 +703,7 @@ export async function updateUserSettings(
         return updated[0] as UserRecord;
       }
     } catch (err) {
-      console.error('Neon DB updateUserSettings error:', err);
+      console.error('Neon DB updateUserSettings error:');
     }
   }
 
@@ -738,7 +770,7 @@ export async function updateUserGoogleTokens(params: {
       `;
       return true;
     } catch (err) {
-      console.error('Neon DB updateUserGoogleTokens error:', err);
+      console.error('Neon DB updateUserGoogleTokens error:');
     }
   }
 
@@ -783,7 +815,7 @@ export async function getDbStatus(): Promise<{
       return {
         connected: false,
         provider: 'neon',
-        message: `Koneksi Neon PostgreSQL Gagal: ${err.message}`
+        message:'Koneksi Neon PostgreSQL gagal; periksa konfigurasi server.'
       };
     }
   }
@@ -868,18 +900,33 @@ export async function saveExtractedEvent(
           ${record.gdrive_folder_url}, ${record.gdrive_file_id}, ${record.gdrive_file_url},
           ${record.source_type}, ${record.file_name}, ${record.created_at}, ${record.google_calendar_id}
         )
+        ON CONFLICT (id) DO UPDATE SET
+          google_event_id=COALESCE(NULLIF(EXCLUDED.google_event_id,''),extracted_events.google_event_id),
+          google_calendar_id=COALESCE(NULLIF(EXCLUDED.google_calendar_id,''),extracted_events.google_calendar_id),
+          google_calendar_url=CASE WHEN EXCLUDED.synced_to_calendar THEN EXCLUDED.google_calendar_url ELSE extracted_events.google_calendar_url END,
+          synced_to_calendar=extracted_events.synced_to_calendar OR EXCLUDED.synced_to_calendar,
+          gdrive_folder_id=COALESCE(NULLIF(EXCLUDED.gdrive_folder_id,''),extracted_events.gdrive_folder_id),
+          gdrive_folder_url=COALESCE(NULLIF(EXCLUDED.gdrive_folder_url,''),extracted_events.gdrive_folder_url),
+          gdrive_file_id=COALESCE(NULLIF(EXCLUDED.gdrive_file_id,''),extracted_events.gdrive_file_id),
+          gdrive_file_url=COALESCE(NULLIF(EXCLUDED.gdrive_file_url,''),extracted_events.gdrive_file_url)
         RETURNING *;
       `;
       if (inserted && inserted.length > 0) {
         return inserted[0] as ExtractedEventRecord;
       }
     } catch (err) {
-      console.error('Neon DB saveExtractedEvent error:', err);
+      console.error('Neon DB saveExtractedEvent failed');
+      if(process.env.NODE_ENV==='production')throw new Error('Riwayat belum tersimpan.');
     }
   }
 
   // Fallback to local file / memory
   const local = getLocalEvents();
+  const existing=local.find(item=>item.id===record.id);
+  if(existing) {
+    for(const key of ['google_event_id','google_calendar_id','google_calendar_url','gdrive_folder_id','gdrive_folder_url','gdrive_file_id','gdrive_file_url'] as const)if(record[key])existing[key]=record[key];
+    existing.synced_to_calendar=Boolean(existing.synced_to_calendar||record.synced_to_calendar);saveLocalEvents(local);return existing;
+  }
   local.unshift(record);
   saveLocalEvents(local);
   memoryEventsList.unshift(record);
@@ -950,7 +997,7 @@ export async function getUserExtractedEvents(params: {
         totalPages: Math.ceil(total / limit) || 1
       };
     } catch (err) {
-      console.error('Neon DB getUserExtractedEvents error:', err);
+      console.error('Neon DB getUserExtractedEvents error:');
     }
   }
 
@@ -1008,11 +1055,11 @@ export async function deleteExtractedEvent(params: {
       // Authorize parent deletion before removing its documentation records.
       if (rows.length) {
         try { await sql`DELETE FROM event_documentations WHERE event_id = ${params.eventId}`; }
-        catch (docErr) { console.error('Neon DB delete attached documentation photos error:', docErr); }
+        catch (docErr) { console.error('Neon DB delete attached documentation photos error:'); }
       }
       return Boolean(rows && rows.length > 0);
     } catch (err) {
-      console.error('Neon DB deleteExtractedEvent error:', err);
+      console.error('Neon DB deleteExtractedEvent error:');
       return false;
     }
   }
@@ -1068,7 +1115,7 @@ export async function getRecentExtractedEventsForUser(
         return rows as ExtractedEventRecord[];
       }
     } catch (err) {
-      console.error('Neon DB getRecentExtractedEventsForUser error:', err);
+      console.error('Neon DB getRecentExtractedEventsForUser error:');
     }
   }
 
@@ -1118,7 +1165,8 @@ export async function updateEventGdriveFolder(params: {
       `;
       return true;
     } catch (err) {
-      console.error('Neon DB updateEventGdriveFolder error:', err);
+      console.error('Neon DB updateEventGdriveFolder error:');
+      if(process.env.NODE_ENV==='production')throw new Error('Folder kegiatan belum tercatat.');
     }
   }
 
@@ -1138,7 +1186,7 @@ export async function updateEventGdriveFolder(params: {
 export async function saveEventDocumentation(
   doc: Omit<EventDocumentationRecord, 'id' | 'created_at'> & { id?: string }
 ): Promise<EventDocumentationRecord> {
-  const docId = doc.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `doc_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`);
+  const docId = doc.id || createHash('sha256').update(`${doc.user_id}:${doc.event_id}:${doc.gdrive_file_id}`).digest('hex');
   const now = new Date().toISOString();
   const dbUrl = getDatabaseUrl();
 
@@ -1168,18 +1216,22 @@ export async function saveEventDocumentation(
           ${record.id}, ${record.event_id}, ${record.user_id}, ${record.gdrive_file_id}, ${record.gdrive_file_url},
           ${record.file_name}, ${record.file_size}, ${record.mime_type}, ${record.taken_at || null}, ${record.match_method}, ${record.created_at}
         )
+        ON CONFLICT (id) DO UPDATE SET id=EXCLUDED.id
         RETURNING *;
       `;
       if (inserted && inserted.length > 0) {
         return inserted[0] as EventDocumentationRecord;
       }
     } catch (err) {
-      console.error('Neon DB saveEventDocumentation error:', err);
+      console.error('Neon DB saveEventDocumentation failed');
+      if(process.env.NODE_ENV==='production')throw new Error('Riwayat foto belum tersimpan.');
     }
   }
 
   // Fallback to local
   const local = getLocalDocs();
+  const existing=local.find(item=>item.id===record.id);
+  if(existing)return existing;
   local.unshift(record);
   saveLocalDocs(local);
   memoryDocsList.unshift(record);
@@ -1202,7 +1254,7 @@ export async function getEventDocumentations(eventId: string): Promise<EventDocu
       `;
       return rows as EventDocumentationRecord[];
     } catch (err) {
-      console.error('Neon DB getEventDocumentations error:', err);
+      console.error('Neon DB getEventDocumentations error:');
     }
   }
 

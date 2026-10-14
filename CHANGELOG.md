@@ -8,6 +8,52 @@ Format mengikuti [Keep a Changelog](https://keepachangelog.com/id/1.0.0/) dan su
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-14
+
+### Security
+
+- Pengaturan webhook dibatasi ke pemilik token tersimpan/admin terdaftar dan Origin yang sesuai; GET tidak lagi memutasi webhook. URL memakai hash identitas bot, tanpa token bot/Gemini, dan request webhook wajib membawa secret header yang valid.
+- Penautan akun memakai kontak milik pengirim atau tautan OAuth sekali pakai dengan state/cookie browser yang cocok. Akun lama dilepas secara transaksional ketika penautan baru selesai. Chat ID tidak dapat ditetapkan melalui pengaturan web; endpoint unggahan, dokumentasi dan status memakai identitas sesi.
+- State bot disimpan terenkripsi di database; produksi menolak fallback antrean/OAuth ke file lokal atau kunci sesi bawaan. Log/kesalahan pada alur utama menyamarkan URL/kredensial. Format kredensial users lama belum dimigrasikan ke enkripsi state baru.
+
+### Changed
+
+- Rilis 1.3.0 menyelaraskan versi package/lockfile, footer dan halaman changelog, README serta penanda versi dokumentasi P0/P1. Webhook lama wajib disinkronkan ulang setelah penerapan. Siapkan database persisten, SESSION_SECRET, TELEGRAM_ADMIN_EMAILS untuk bot global dan CRON_SECRET untuk worker.
+
+### Added
+
+- Aturan permintaan push Git kini mencakup rilis aplikasi: peninjauan dokumentasi dan .gitignore, penyelarasan versi, catatan rilis, pemeriksaan, commit serta push branch/tag. Instruksi dicatat di AGENTS.md/Rules.md tanpa menjalankan push hanya karena aturan ditambahkan.
+
+- Antrean Telegram persisten dengan deduplikasi update, lease pekerjaan/chat, penggabungan album, batas percobaan ulang, kuota per pengguna dan worker terproteksi. Pemrosesan awal memakai after(); pemulihan tanpa pesan baru memakai cron harian bawaan atau scheduler/worker mandiri yang lebih sering.
+- Pemilih kegiatan dan pencarian foto langsung di Telegram, satu tujuan/ringkasan album, pratinjau semula → menjadi, konfirmasi perubahan, undo terakhir, pengarsipan surat revisi serta tombol pemulihan unggah/lampiran dan perintah /arsip.
+- Dukungan gambar sebagai document dan berkas TXT; pencarian /cari, /lampau, /hariini, /besok, /minggu dan rentang tanggal; /status dan /status cek membedakan konfigurasi dari pemeriksaan akses baca layanan.
+- Pelengkapan waktu melalui /lengkapi dan konfirmasi sebelum menyimpan hasil ekstraksi yang belum pasti. Panduan migrasi, retensi, perintah dan batas operasional tersedia di Telegram.md; environment contoh dan dokumentasi produk/arsitektur/skema/desain/aturan diselaraskan.
+- Perintah npm test/typecheck/telegram:worker dan GitHub Actions untuk pemeriksaan offline, tipe, build serta diff; pengujian baru mencakup keamanan, antrean, workflow, masukan/pencarian dan deduplikasi efek eksternal.
+
+- Berkas sumber PDF, gambar undangan, dan salinan TXT otomatis dipasang sebagai lampiran pada event Google Calendar baru melalui web dan Telegram setelah unggahan Drive berhasil.
+- Status lampiran ditampilkan terpisah dari status penyimpanan event. Lampiran lama dipertahankan, berkas yang sama tidak ditambahkan dua kali, batas 25 lampiran diperiksa, dan konflik perubahan kalender dilindungi ETag.
+- Tes lampiran Calendar untuk PDF/gambar/TXT, integrasi web/Telegram, kegagalan Drive/Calendar, metadata berkas, batas jumlah, dan pencegahan duplikasi di scratch/test-calendar-attachments.ts.
+
+### Fixed
+
+- Skrip npm run lint memakai ESLint CLI dan flat config Core Web Vitals untuk Next.js 16, menggantikan next lint yang sudah dihapus. Dependensi/lockfile serta CI diperbarui; temuan Hooks, waktu saat render, kutip JSX dan penamaan module pada harness tes diperbaiki tanpa menonaktifkan aturan.
+- .gitignore mencakup environment lokal (dengan pengecualian .env.example), kredensial/state, cache, laporan, file sementara dan scratch/local. Empat skrip percobaan lama dihentikan pelacakannya tanpa menghapus salinan lokal; tes regresi/runner/worker tetap disertakan.
+
+- Waktu mulai yang tidak valid/hilang tidak lagi diisi besok. Asumsi waktu akhir/judul/tempat memerlukan pemeriksaan; web menahan penyimpanan dan ekspor ketika hasil perlu dikoreksi. Pembaruan jadwal diklaim bersama nilai baru dan audit semula/menjadi.
+- Retry memakai ID event Calendar dan riwayat yang stabil, pemulihan konflik insert 409, serta penanda folder/file Drive dan ID foto stabil. Poster berbeda dalam satu album memiliki identitas operasi berbeda; hasil ekstraksi awal dipertahankan saat retry.
+- Pengiriman pesan membaca respons Telegram sekali dan hanya mengulang untuk kesalahan format atau batas laju yang sesuai, dengan timeout dan pesan kesalahan tanpa kredensial.
+
+- Kegagalan unggah berkas sumber setelah folder Drive berhasil dibuat kini dilaporkan sebagai kegagalan arsip dengan identitas folder tetap tersedia. Kegagalan arsip atau pemasangan lampiran tidak membatalkan event dan tidak memicu pembuatan ulang event.
+
+### Validation
+
+- Pengujian P0/P1 dan regresi memakai layanan tiruan/filesystem terisolasi, bukan akun Google/Telegram atau Neon produksi. Verifikasi transaksi Neon nyata, webhook publik dan scheduler hosting belum dilakukan; diperlukan konfigurasi lingkungan dan sinkronisasi ulang webhook sebelum digunakan setelah penerapan.
+- Verifikasi persiapan rilis 1.3.0 (2026-10-14): npm test (11 suite offline), npm run typecheck, build produksi, pemeriksaan tautan lokal/versi paket, berkas privat dan git diff --check lulus. Setelah migrasi lint, npm run lint lulus dengan 0 error dan 6 warning font/gambar/navigasi; npm ls dan npm ci --dry-run --ignore-scripts --offline memeriksa konsistensi dependensi/lockfile. Build tetap mengeluarkan peringatan fs/zlib bawaan. Pemeriksaan browser baru untuk P0/P1 tidak dilakukan; pemeriksaan browser lampiran di bawah berasal dari pekerjaan sebelumnya.
+- ESLint 10 dicoba tetapi gagal pada plugin React bawaan konfigurasi Next.js 16.3.4; ESLint 9 yang kompatibel dipakai dan npm memberi peringatan masa dukungannya. npm audit masih mencatat 9 temuan dependensi (8 high, 1 critical), mencakup framework dan rantai tooling; migrasi lint ini tidak menjalankan pembaruan framework/major atau audit fix --force. CI sesudah push dan layanan produksi perlu diverifikasi terpisah dari pemeriksaan lokal.
+
+- Tes lampiran, pemulihan otorisasi, lifecycle kegiatan, progress Telegram, dan waktu foto lulus dengan layanan tiruan. Chrome headless memeriksa pesan lampiran berhasil/gagal pada dashboard localhost di lebar 320, 360, 768, dan 1280px tanpa overflow, dengan respons API tiruan.
+- Pemeriksaan pekerjaan lampiran sebelumnya meluluskan build, TypeScript, dokumentasi dan diff check, tetapi saat itu skrip next lint masih gagal; keterbatasan tersebut ditangani migrasi lint di atas. Lampiran pada akun Google nyata belum diuji; status push/tag tidak membuktikan deployment produksi berhasil. Event lama tidak diisi ulang massal dan foto dokumentasi tidak otomatis menjadi lampiran; surat revisi kini dicakup alur P1 setelah konfirmasi.
+
 ## [1.2.0] - 2026-10-14
 
 ### Added

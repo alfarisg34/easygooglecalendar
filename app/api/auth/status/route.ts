@@ -5,7 +5,8 @@ import { getSessionFromRequest } from '@/lib/auth-session';
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const session = await getSessionFromRequest(req);
-  const userId = searchParams.get('user_id') || session?.userId || session?.email || 'web_user';
+  if(!session)return NextResponse.json({connected:false});
+  const userId = session.userId;
 
   const auth = await getUserGoogleAuth(userId);
 
@@ -27,7 +28,9 @@ export async function GET(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const session = await getSessionFromRequest(req);
-  const userId = searchParams.get('user_id') || session?.userId || session?.email || 'web_user';
+  if(!session)return NextResponse.json({success:false,error:'Unauthorized'},{status:401});
+  if(req.headers.get('origin')!==new URL(req.url).origin)return NextResponse.json({success:false,error:'Origin ditolak.'},{status:403});
+  const userId = session.userId;
 
   await deleteUserGoogleAuth(userId);
 

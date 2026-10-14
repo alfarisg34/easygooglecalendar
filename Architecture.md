@@ -1,6 +1,25 @@
 # System Architecture Document
 ## EasyCal // Serverless OCR & Gemini Calendar Studio
 
+### Jalur bot P0/P1 (v1.3.0)
+
+- `telegram-webhook.ts` memvalidasi secret header, menerima bot melalui identitas hash, menyimpan update terenkripsi, lalu merespons 200. Kegagalan penyimpanan menghasilkan 503 agar pengiriman bisa diulang Telegram. Token/kunci dari query tidak digunakan untuk otorisasi.
+- `telegram-state.ts` menyimpan payload AES-256-GCM dan versi CAS di Neon; `telegram-queue.ts` mengelompokkan album, membatasi kuota, mengklaim lease pekerjaan/chat, serta memulihkan pekerjaan terputus maksimal tiga kali. JSON lokal hanya untuk pengembangan. `after()` menjalankan pekerjaan awal; worker terproteksi memulihkan backlog, dengan cron harian bawaan atau penjadwal yang lebih sering sesuai hosting.
+- `telegram-security.ts` mengelola akses setup pemilik/admin, secret webhook, binding Telegram dan OAuth state sekali pakai yang terikat cookie. Pengaturan web tidak bisa mengubah identitas Telegram, dan endpoint status/unggahan memakai identitas sesi. Penautan Google baru melepas akun lama dengan transaksi dan advisory lock.
+- `telegram-workflows.ts` menyimpan pilihan foto/album, pratinjau perubahan, konfirmasi, snapshot undo, serta pemulihan sumber/lampiran. Setiap aksi terikat pengguna/chat/bot/pemilik dan kedaluwarsa. Jadwal diklaim bersama nilai baru; riwayat mencatat semula → menjadi. Sumber revisi diunggah dan dilampirkan sesudah konfirmasi tanpa mengganti event/folder lama.
+- `telegram-context.ts` memberi identitas operasi per pekerjaan. Calendar memakai ID insert stabil dan pemulihan konflik 409; Drive memakai `appProperties` untuk mencari ulang hasil operasi. Riwayat/foto memakai ID stabil. Perlindungan ini tidak membentuk transaksi atomik lintas layanan eksternal.
+- Ekstraksi tidak mengganti waktu mulai yang kosong dengan besok. Bot meminta pelengkapan/konfirmasi; web mengembalikan `requiresConfirmation` tanpa sinkronisasi/ICS/riwayat. `/status cek` memeriksa akses baca layanan, bukan membuat event.
+
+Kontrak, retensi, perintah, batas hosting, dan migrasi operasional dijelaskan di [Telegram.md](Telegram.md).
+
+### Lint dan pemeriksaan repositori
+
+`npm run lint` menjalankan ESLint CLI dengan flat config `eslint.config.mjs` dan preset `eslint-config-next/core-web-vitals` versi yang selaras dengan Next.js 16.3.4. Parser preset mendukung JavaScript/TypeScript; pemeriksaan tipe penuh tetap melalui `npm run typecheck`. CI menjalankan lint sebelum tes/build. Build, dependencies, context lokal, cache, serta percobaan lokal dikecualikan; tes regresi dan worker tetap diperiksa.
+
+Inisialisasi sesi memperbarui state setelah respons jaringan dan mengabaikan respons setelah komponen dilepas. Pemuatan riwayat memiliki callback stabil, pembatalan request awal, serta pemeriksaan nomor request untuk respons yang datang terlambat. Pembungkus event handler menandai loading sebelum pemuatan manual; waktu peringatan dialog pemulihan diambil saat dialog dibuka. Perubahan ini menyelesaikan temuan Hooks/purity tanpa mematikan aturan lint.
+
+ESLint 9 dipakai karena plugin React bawaan konfigurasi 16.3.4 gagal pada ESLint 10 (`context.getFilename`). npm memberi peringatan masa dukungan versi 9; upgrade tooling berikutnya perlu menyelaraskan plugin. Instalasi dan audit dependensi tidak otomatis menjadi perintah memperbarui framework atau menjalankan audit fix --force.
+
 ---
 
 ## 1. System Overview & Architectural Principles
@@ -86,7 +105,8 @@ flowchart TB
     DocRoute --> DriveService
     DocRoute --> SessionManager
     EventsRoute --> SessionManager
-    TgWebhookRoute --> TgHandler
+    TgWebhookRoute --> TgQueue["telegram-queue.ts / telegram-state.ts"]
+    TgQueue --> TgHandler
     TgHandler --> GeminiEngine
     TgHandler --> DupDetector
     TgHandler --> PhotoMatcher
@@ -162,7 +182,7 @@ Dashboard memakai kolom `minmax(0, ...)` agar ukuran minimum konten tidak memper
 
 * **Validasi Waktu & Fallback OCR**: `parseWatermarkTimestamp` memvalidasi tanggal, jam, dan offset tanpa membuat jam default. `resolvePhotoTimestamp` mengembalikan waktu EXIF/watermark valid atau null. OCR mencoba model pengguna lalu rantai cadangan yang sama dengan ekstraksi agenda, dengan timeout delapan detik per model; HTTP 404/429/503 mencoba model berikutnya, sedangkan kegagalan izin dihentikan.
 * **Pengarsipan Berdasarkan Bukti**: Telegram dan /api/documentation menghentikan pencocokan otomatis jika waktu foto tidak ada. Satu kandidat dengan score minimal 0,85 diperlukan untuk auto-filing; score 0,65 karena tanggal sama hanya menjadi saran. Beberapa kandidat berdekatan ditandai ambiguous dan memerlukan pemilihan manual. Telegram tidak membuat folder terpisah ketika tidak ada kecocokan.
-* **Waktu Manual Tidak Diketahui**: Web mengizinkan eventId pilihan manual tanpa bukti waktu. Respons menyertakan captureTime: null, metadata taken_at disimpan kosong, dan waktu unggah hanya dapat dipakai untuk prefix nama berkas. UI tidak menampilkannya sebagai waktu pengambilan. Foto album Telegram diproses dan dibalas satu per satu; caption poster diprioritaskan.
+* **Waktu Manual Tidak Diketahui**: Web mengizinkan eventId pilihan manual tanpa bukti waktu. Respons menyertakan captureTime: null, metadata taken_at disimpan kosong, dan waktu unggah hanya dapat dipakai untuk prefix nama berkas. UI tidak menampilkannya sebagai waktu pengambilan. Album foto Telegram dikumpulkan dalam satu pekerjaan dan satu pilihan tujuan/ringkasan; caption poster diprioritaskan.
 
 #### `gemini.ts` (Mesin Multimodal & Normalisasi Data)
 * **Prompt Engineering Terstruktur**: Prompt sistem berbasis panduan ketat tata kelola dokumen kedinasan Indonesia (Kop surat, nomor dinas, penentuan durasi default 2 jam jika 's.d. selesai', ekstraksi Meeting ID & Passcode Zoom, serta bobot JP).
@@ -190,6 +210,10 @@ Dashboard memakai kolom `minmax(0, ...)` agar ukuran minimum konten tidak memper
 * **Autentikasi Otomatis via Refresh Token**: Memperbarui *access token* yang kedaluwarsa secara otomatis menggunakan event listener `tokens` dari OAuth2Client.
 * **Konstruksi Deskripsi Kaya**: Menghasilkan deskripsi agenda terstruktur berisi nomor surat dinas, link meeting, kredensial akses, bobot JP, dan tautan folder Google Drive.
 
+* **Orkestrasi Sumber (`syncGoogleCalendarEventWithSource`)**: Membuat event satu kali, mengarsipkan sumber ke Drive, lalu memasang lampiran hanya jika keduanya berhasil. Hasil memisahkan insertResult, gdriveResult, dan attachmentResult. Web menyertakan attachmentResult pada autoSyncResult; bot menampilkan hasilnya dalam balasan event.
+* **Lampiran Drive (`attachDriveFileToCalendarEvent`)**: Membaca lampiran event, memeriksa berkas yang sama dan batas 25 lampiran, lalu PATCH hanya attachments dengan supportsAttachments: true, sendUpdates: none, dan If-Match ETag. fileId dipakai untuk pemeriksaan, bukan ditulis ke field attachment yang read-only. URL, judul, dan MIME berasal dari hasil unggahan Drive. Kegagalan tidak memicu insert ulang dan tidak mengubah izin berbagi file.
+* **Metadata Unggahan**: Adapter Drive mengembalikan fileName dan mimeType aktual beserta fileId/fileUrl. Jika folder tersedia tetapi unggahan sumber gagal, hasil arsip success: false tetap menyertakan folderId/folderUrl dan pesan kegagalan. Event Calendar yang sudah dibuat dipertahankan.
+
 #### `telegram-handler.ts` (Bot Telegram Terintegrasi)
 * **Animated Progress Bar Engine**: Mengirim dan memperbarui bilah persentase kemajuan menggunakan `setInterval` asinkron dengan rotasi pesan kontekstual.
 * **Verifikasi Kontak (Phone Binding)**: Memproses pesan kontak (`msg.contact`) untuk menyinkronkan identitas Telegram ID dengan nomor HP yang didaftarkan pengguna di dashboard web.
@@ -207,7 +231,7 @@ Dashboard memakai kolom `minmax(0, ...)` agar ukuran minimum konten tidak memper
 * **`token-store.ts` & callback OAuth**: Database menjadi sumber utama token sebelum cache memori/KV/file. Login ulang menghapus alias cache akun terkait; callback menyimpan identitas Google dan refresh token efektif dari database.
 * **`google-api-error.ts`**: Mengenali `invalid_grant` melalui pesan atau respons OAuth dan menyediakan petunjuk reconnect bersama untuk Drive dan Calendar. Kesalahan ini tidak memicu fallback pembuatan folder Drive di root. Tombol reconnect tersedia pada `/connect` meskipun akun masih terhubung.
 
-Alur pembaruan: Telegram ? ekstraksi metadata perubahan ? pencocokan/pemilihan kegiatan ? validasi kepemilikan dan versi ? simpan jadwal pada record lama ? PATCH Calendar ? simpan hasil sinkronisasi. Alur ini tidak membuat folder baru, mengganti nama folder, atau mengunggah surat revisi sebagai berkas tambahan.
+Alur pembaruan: Telegram ? ekstraksi ? pencocokan ? pratinjau semula/menjadi ? konfirmasi pengguna ? klaim versi dan simpan jadwal ? PATCH Calendar ? arsip/lampiran revisi pada kegiatan yang sama. Folder lama tidak diganti namanya; folder dibuat jika kegiatan belum memilikinya.
 
 ## 5. Detailed Sequence Diagrams
 
@@ -252,6 +276,10 @@ sequenceDiagram
             
             Route->>Drive: Buat Folder (YYYY-MM-DD - Judul) & Unggah Berkas
             Drive-->>Route: Drive Folder & File URLs
+            opt Event dan berkas berhasil dibuat
+                Route->>Cal: PATCH attachments (supportsAttachments, If-Match)
+                Cal-->>Route: Hasil lampiran terpisah dari hasil insert
+            end
         end
         
         Route->>DB: INSERT INTO extracted_events (Simpan Riwayat)
@@ -278,7 +306,10 @@ sequenceDiagram
 
     TGUser->>Telegram: Kirim Berkas Surat PDF / Poster Gambar
     Telegram->>Webhook: POST Webhook Update (Update JSON)
-    Webhook->>Handler: handleTelegramWebhook(update)
+    Webhook->>DB: Validasi secret, simpan pekerjaan terenkripsi dan update_id
+    Webhook-->>Telegram: HTTP 200 setelah tersimpan
+    Note over Webhook,Handler: after()/worker terproteksi mengklaim pekerjaan
+    Webhook->>Handler: handleTelegramWebhook(update) melalui worker
     
     Handler->>Telegram: sendMessage("⏳ Menginisialisasi AI...")
     Telegram-->>Handler: message_id (untuk diedit)
@@ -300,6 +331,10 @@ sequenceDiagram
     
     Handler->>Drive: Buat Sub-folder & Unggah Berkas Sumber
     Drive-->>Handler: Folder URL & File URL
+    opt Event dan berkas berhasil dibuat
+        Handler->>Cal: PATCH attachments (supportsAttachments, If-Match)
+        Cal-->>Handler: Hasil pemasangan lampiran
+    end
     
     Handler->>DB: Simpan Riwayat ke extracted_events
     DB-->>Handler: Saved

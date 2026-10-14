@@ -154,6 +154,9 @@ body::before {
 .changelog-section code { color: var(--text-main); font-family: var(--font-mono); font-size: .9em; }
 .changelog-section a { color: var(--signal-blue); }
 
+.calendar-attachment-status { margin-bottom: 1rem; font-size: .8rem; color: var(--signal-amber); overflow-wrap: anywhere; }
+.calendar-attachment-status.is-attached { color: var(--signal-green); }
+
 /* Masthead Header */
 .masthead {
   display: flex;

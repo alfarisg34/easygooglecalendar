@@ -11,10 +11,10 @@ import type { TelegramUpdate } from '../lib/types';
 const nativeRequire = createRequire(import.meta.url);
 function load<T>(file: string, mocks: Record<string, unknown>, globals: Record<string, unknown> = {}): T {
   const source = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, esModuleInterop: true } }).outputText;
-  const module = { exports: {} };
-  vm.runInNewContext(source, { module, exports: module.exports, require: (id: string) => id in mocks ? mocks[id] : nativeRequire(id),
+  const sandboxModule = { exports: {} };
+  vm.runInNewContext(source, { module: sandboxModule, exports: sandboxModule.exports, require: (id: string) => id in mocks ? mocks[id] : nativeRequire(id),
     Buffer, URL, Error, AbortSignal, console, process: { env: {}, cwd: () => '/isolated' }, ...globals }, { filename: file });
-  return module.exports as T;
+  return sandboxModule.exports as T;
 }
 
 const files = new Map<string, string>();
@@ -105,7 +105,7 @@ async function main() {
     botToken: 'test-bot', chatId: userId, userId, chatType: 'private', owner, hostOrigin: 'https://example.com', send: async m => { messages.push(m); }
   });
   await request('/agenda'); assert.match(messages.at(-1)?.text || '', /1\. Rapat A/);
-  assert.equal(webhookUpgrades, 1, 'Existing message-only webhook must enable confirmation callbacks');
+  assert.equal(webhookUpgrades, 0, 'Agenda browsing cannot mutate secured webhook configuration');
   await request('batal 0'); assert.match(messages.at(-1)?.text || '', /Nomor tidak tersedia/);
   await request('batal 1 Ada perubahan');
   const firstToken = messages.at(-1)?.inlineButtons?.[0].callback_data;

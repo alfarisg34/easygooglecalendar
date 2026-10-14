@@ -1,3 +1,4 @@
+import { createLoader } from './test-loader.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -7,14 +8,7 @@ import type { ExtractedEventRecord } from '../lib/db';
 
 const nativeRequire = createRequire(import.meta.url);
 function load<T>(file: string, mocks: Record<string, unknown>, globals: Record<string, unknown> = {}): T {
-  const source = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: {
-    target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, esModuleInterop: true
-  } }).outputText;
-  const module = { exports: {} };
-  vm.runInNewContext(source, { module, exports: module.exports,
-    require: (id: string) => id in mocks ? mocks[id] : nativeRequire(id), Buffer, AbortSignal, console,
-    process: { env: {}, cwd: () => '/isolated' }, ...globals }, { filename: file });
-  return module.exports as T;
+  return createLoader(mocks,globals).load<T>(file);
 }
 
 async function main() {
@@ -55,7 +49,8 @@ async function main() {
   let history = events;
   const messages: string[] = [];
   const handler = load<typeof import('../lib/telegram-handler')>('lib/telegram-handler.ts', {
-    './event-update': {}, './event-lifecycle-store': {}, './telegram-agenda': { handleTelegramAgenda: async () => false },
+    './event-update': {}, './event-lifecycle-store': {}, './telegram-workflows':{handleWorkflowInput:async()=>false,currentSource:()=>[],offerPhotoSelection:async(args:{reason:string})=>messages.push(args.reason)},
+    './telegram-agenda': { handleTelegramAgenda: async () => false },
     './gemini': {}, './google-calendar-api': {}, './duplicate-detector': {},
     './token-store': { getUserGoogleAuth: async () => ({ userId: 'owner', email: 'owner@example.com' }) },
     './db': { getUserByTelegram: async () => ({ id: 'owner' }), getBotAdminSettings: async () => null,
@@ -67,7 +62,7 @@ async function main() {
     } }
   }, { fetch: async (url: string, args?: { body: string }) => {
     if (url.includes('/getFile')) return { ok: true, json: async () => ({ ok: true, result: { file_path: 'photo.jpg' } }) };
-    if (url.includes('/file/')) return { ok: true, arrayBuffer: async () => new ArrayBuffer(1) };
+    if (url.includes('/file/')) return new Response('source');
     messages.push(JSON.parse(args!.body).text); return { ok: true, json: async () => ({ ok: true }) };
   } });
   const sendPhoto = () => handler.handleTelegramWebhook({ update_id: 1, message: {

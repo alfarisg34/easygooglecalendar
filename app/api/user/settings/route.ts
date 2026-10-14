@@ -34,6 +34,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  if (req.headers.get('origin') !== new URL(req.url).origin) return NextResponse.json({error:'Origin tidak diizinkan.'},{status:403});
   const session = await getSessionFromRequest(req);
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized. Silakan login terlebih dahulu.' }, { status: 401 });
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest) {
       gdrive_root_folder_id: parsedDriveId,
       gdrive_root_folder_url: cleanDriveUrl,
       telegram_bot_token: typeof telegramBotToken === 'string' && telegramBotToken.trim() !== '' ? telegramBotToken.trim() : undefined,
-      telegram_chat_id: typeof telegramChatId === 'string' && telegramChatId.trim() !== '' ? telegramChatId.trim() : undefined
+      // Telegram binding is only established by a verified contact or one-time OAuth link.
     });
 
     if (!updatedUser) {

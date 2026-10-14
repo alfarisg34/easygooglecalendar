@@ -1,6 +1,30 @@
 # Database Schema & Data Model Document
 ## EasyCal // Serverless Data Architecture & Contracts
 
+### State Telegram P0/P1 — Unreleased
+
+`telegram-state.ts` membuat tabel berikut secara idempoten ketika pertama kali dipakai. Database wajib untuk bot/OAuth produksi; kegagalan koneksi tidak dialihkan ke JSON lokal.
+
+```sql
+CREATE TABLE IF NOT EXISTS telegram_state (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  due BIGINT NOT NULL,
+  expires BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS telegram_state_due_idx ON telegram_state (kind, due);
+```
+
+`payload` adalah base64 dari IV 12 byte, ciphertext JSON, dan authentication tag 16 byte (AES-256-GCM; kunci SHA-256 dari SESSION_SECRET). `version` mendukung compare-and-swap, sedangkan `due`/`expires` adalah epoch milidetik. Kind meliputi bot, binding, oauth, job, lock, admission, quota, extraction, status, action, notice, dan source-archive. Retensi dan kebijakan rotasi kunci ada di [Telegram.md](Telegram.md). Pengembangan tanpa database menggunakan `.telegram_state.json` yang diabaikan Git.
+
+Job menyimpan update, kredensial bot terenkripsi, origin, status pending/processing/done/failed, attempts, leaseUntil dan receivedAt. Kunci job menggabungkan hash bot dengan update_id atau identitas album/chat. Action menyimpan pemilik, aktor, chat, bot, ID/versi kegiatan, snapshot sebelum/sesudah, referensi file Telegram atau teks, pilihan kandidat, lease dan status konsumsi. Biner unduhan tidak disimpan dalam action. `source-archive` menghubungkan metadata berkas revisi dengan kegiatan/pemilik selama satu tahun. Ini tidak mengubah format plaintext kredensial yang sudah ada pada tabel users.
+
+`CalendarEvent` dapat memuat `validation_warnings: string[]` dan `needs_confirmation: boolean`; waktu tidak terbaca berupa string kosong dan tidak boleh disimpan sebagai event baru. API ekstraksi web mengembalikan `requiresConfirmation: true` untuk hasil tersebut, tanpa ICS, history atau auto-sync. `EventUpdate.end_date` mendukung snapshot undo lintas hari, dan clock menerima HH:mm atau HH:mm:ss. Riwayat lifecycle menyimpan uraian perubahan semula/menjadi pada reason. Event dan foto memakai ID stabil serta upsert metadata sinkronisasi untuk retry.
+
+Setup webhook menerima POST `{ action, botToken? }` dengan sesi dan Origin yang valid. Token harus milik akun tersimpan atau admin terdaftar. URL webhook yang dikembalikan hanya memuat hash bot. Worker menerima Bearer CRON_SECRET. Parameter identitas pengguna dari body/header/query tidak mengotorisasi akses unggahan, dokumentasi atau status akun; identitas diambil dari sesi.
+
 ---
 
 ## 1. Database Overview & Engine
@@ -8,7 +32,7 @@
 EasyCal menggunakan basis data **Neon PostgreSQL Serverless** yang terhubung melalui pustaka `@neondatabase/serverless`. Arsitektur ini dirancang untuk:
 * **Serverless HTTP/WebSocket Connection Pool**: Menghilangkan batasan koneksi persisten Postgres konvensional pada runtime serverless (Vercel).
 * **Auto-Schema Migration (`initDatabase`)**: Menjalankan migrasi DDL otomatis saat aplikasi pertama kali dieksekusi tanpa perlu perkakas CLI migrasi tambahan.
-* **Dual-Layer Resilience**: Apabila variabel environment database (`DATABASE_URL` atau `POSTGRES_URL`) tidak terkonfigurasi, sistem secara otomatis beralih ke penyimpanan lokal (*fallback JSON storage*) pada berkas `.user_tokens.json` dan `.user_events.json`.
+* **Dual-Layer Resilience**: Apabila variabel environment database (`DATABASE_URL` atau `POSTGRES_URL`) tidak terkonfigurasi, mode pengembangan dapat menggunakan JSON lokal. State antrean/OAuth produksi wajib memakai database dan menolak fallback ketika konfigurasi/koneksi gagal.
 
 ---
 
@@ -24,7 +48,7 @@ erDiagram
         VARCHAR(255) email UK "Alamat email unik pengguna"
         VARCHAR(255) name "Nama lengkap profil"
         TEXT picture "URL foto avatar Google"
-        VARCHAR(50) phone_number "Nomor HP / WhatsApp terverifikasi"
+        VARCHAR(50) phone_number "Nomor HP profil; kepemilikan dicek saat kontak Telegram"
         TEXT google_refresh_token "Token OAuth offline refresh"
         TEXT google_access_token "Token akses Google API sementara"
         BIGINT google_token_expiry "Timestamp kedaluwarsa token akses"
@@ -203,6 +227,7 @@ Metadata perubahan hasil ekstraksi, digunakan pada alur pembaruan Telegram:
 export interface EventUpdate {
   original_date?: string; // YYYY-MM-DD: tanggal semula untuk pencocokan
   date?: string;          // YYYY-MM-DD: tanggal baru
+  end_date?: string;      // YYYY-MM-DD: tanggal selesai, termasuk snapshot undo lintas hari
   start_clock?: string;   // HH:mm: jam mulai baru
   end_clock?: string;     // HH:mm: jam akhir baru
   location?: string;      // tempat baru
@@ -242,6 +267,21 @@ export interface ExtractionResponse {
   debugInfo?: string;
 }
 ```
+
+### 4.2.1 Status Lampiran Calendar & Metadata Arsip
+
+Respons POST /api/extract pada autoSyncResult yang berhasil menyertakan attachmentResult:
+
+```typescript
+interface CalendarAttachmentResult {
+  attached: boolean;
+  error?: string;
+}
+```
+
+Nilai autoSyncResult.synced tetap true ketika event berhasil dibuat meskipun attachmentResult.attached false. gdriveResult dapat menyertakan fileName dan mimeType dari Drive, selain fileId/fileUrl dan folderId/folderUrl. Kegagalan unggah sumber setelah folder dibuat menghasilkan gdriveResult.success false dengan identitas folder dan error tetap tersedia.
+
+Payload PATCH Calendar berisi attachments berupa fileUrl, title, mimeType, serta metadata lampiran lama yang dapat ditulis; fileId hanya digunakan untuk pemeriksaan duplikasi karena field tersebut read-only pada Calendar. ETag dan supportsAttachments dikirim sebagai opsi/parameter request. Identitas berkas tetap memakai kolom extracted_events.gdrive_file_id/gdrive_file_url yang tersedia. Status lampiran pada hasil ekstraksi bersifat respons per operasi; tidak ada kolom/migrasi baru atau backfill untuk riwayat lama.
 
 ### 4.3 `DuplicateDetectionResult`
 Kontrak data evaluasi sistem anti-duplikasi:

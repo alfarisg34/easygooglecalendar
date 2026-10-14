@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateGoogleAuthUrl, getEffectiveRedirectUri } from '@/lib/google-auth';
+import { createOAuthState } from '@/lib/telegram-security';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const userId = searchParams.get('user_id') || searchParams.get('tg_user_id') || 'web_user';
   const redirectUri = getEffectiveRedirectUri(req);
 
   const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
@@ -15,10 +15,13 @@ export async function GET(req: NextRequest) {
     }, { status: 500 });
   }
 
+  const { state, cookie } = await createOAuthState(searchParams.get('binding'));
   const authUrl = generateGoogleAuthUrl({
-    userId,
+    state,
     redirectUri
   });
 
-  return NextResponse.redirect(authUrl);
+  const response = NextResponse.redirect(authUrl);
+  response.cookies.set('easycal_oauth',cookie,{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:'lax',maxAge:600,path:'/api/auth'});
+  return response;
 }

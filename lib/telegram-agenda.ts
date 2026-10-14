@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
 import { DateTime } from 'luxon';
 import { TelegramUpdate } from './types';
-import { EventOwner, AgendaSession, listOwnedAgenda, findOwnedEvent, readAgendaSession, writeAgendaSession } from './event-lifecycle-store';
+import { EventOwner, AgendaSession, AgendaFilter, listOwnedAgenda, findOwnedEvent, readAgendaSession, writeAgendaSession } from './event-lifecycle-store';
 import { changeEventLifecycle } from './event-lifecycle';
 
 interface AgendaMessage {
@@ -10,25 +10,6 @@ interface AgendaMessage {
 }
 
 const schedule = (start: string, end: string) => `${DateTime.fromISO(start).setZone('Asia/Jakarta').toFormat('dd MMM yyyy, HH:mm')}–${DateTime.fromISO(end).setZone('Asia/Jakarta').toFormat('HH:mm')} WIB`;
-
-/** Upgrade existing EasyCal webhooks that previously accepted only message updates. */
-async function enableConfirmationCallbacks(botToken: string, origin: string): Promise<boolean> {
-  try {
-    const endpoint = `https://api.telegram.org/bot${botToken}`;
-    const response = await fetch(`${endpoint}/getWebhookInfo`, { signal: AbortSignal.timeout(5000) });
-    const data: { ok?: boolean; result?: { url?: string; allowed_updates?: string[]; has_custom_certificate?: boolean; max_connections?: number } } = await response.json();
-    if (!data.ok || !data.result?.url) return false;
-    const info = data.result;
-    if (!info.allowed_updates?.length || info.allowed_updates.includes('callback_query')) return true;
-    const url = new URL(info.url!);
-    if (url.origin !== new URL(origin).origin || !['/api/telegram', '/api/telegram/webhook'].includes(url.pathname) || info.has_custom_certificate) return false;
-    const result = await fetch(`${endpoint}/setWebhook`, { method: 'POST', signal: AbortSignal.timeout(5000),
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: info.url,
-        allowed_updates: [...info.allowed_updates, 'callback_query'], max_connections: info.max_connections }) });
-    const body: { ok?: boolean } = await result.json();
-    return Boolean(body.ok);
-  } catch { return false; }
-}
 
 /** Numbered selections persist per bot/user/chat across serverless webhook invocations. */
 export async function handleTelegramAgenda(params: {
@@ -39,7 +20,21 @@ export async function handleTelegramAgenda(params: {
   const callback = params.update.callback_query;
   const text = (params.update.message?.text || '').trim();
   const command = text.toLowerCase().split(/\s+/, 1)[0].split('@', 1)[0];
-  const isList = command === '/agenda' || command === '/dibatalkan';
+  const isList = ['/agenda','/dibatalkan','/cari','/lampau','/hariini','/besok','/minggu'].includes(command);
+  const filter:AgendaFilter={};
+  let listPage=Number(/--halaman\s+(\d+)/.exec(text)?.[1]||(/^\/(agenda|dibatalkan)\s+(\d{1,4})(?:\s|$)/i.exec(text)?.[2])||1);
+  if(command==='/cari')filter.search=text.replace(/^\/cari(?:@\S+)?\s*/i,'').replace(/\s+--halaman\s+\d+\s*$/,'').slice(0,150);
+  if(command==='/lampau')filter.past=true;
+  const dates=text.match(/\b\d{4}-\d{2}-\d{2}\b/g);
+  const day=DateTime.now().setZone('Asia/Jakarta').startOf('day');
+  if(['/hariini','/besok','/minggu'].includes(command)) {
+    const begin=command==='/besok'?day.plus({days:1}):day;
+    filter.from=begin.toISO()!;filter.to=begin.plus({days:command==='/minggu'?7:1}).toISO()!;
+  } else if(command==='/agenda' && dates?.length) {
+    const begin=DateTime.fromISO(dates[0],{zone:'Asia/Jakarta'});const end=DateTime.fromISO(dates[1]||dates[0],{zone:'Asia/Jakarta'}).plus({days:1});
+    if(!begin.isValid||!end.isValid||end<=begin)listPage=NaN;
+    else {filter.from=begin.toISO()!;filter.to=end.toISO()!;}
+  }
   const selection = /^\/?(batal|aktifkan|sinkron)\s+(\d+)(?:\s+([\s\S]+))?$/i.exec(text);
   const isAction = /^\/?(batal|aktifkan|sinkron)(?:\s|$)/i.test(text);
   const isCallback = Boolean(callback?.data?.startsWith('agenda:'));
@@ -63,29 +58,25 @@ export async function handleTelegramAgenda(params: {
   }
   const key = `${createHash('sha256').update(params.botToken).digest('hex').slice(0, 16)}:${params.chatId}:${params.userId}:${owner.userId}`;
   const showList = async (status: 'active' | 'cancelled', page: number = 1) => {
-    const result = await listOwnedAgenda(owner, status, page);
+    const result = await listOwnedAgenda(owner, status, page, filter);
     const session: AgendaSession = { status, ids: result.events.map(e => e.id), versions: result.events.map(e => e.lifecycle_version || 0), expiresAt: Date.now() + 15 * 60000 };
     await writeAgendaSession(key, session);
     if (!result.events.length) {
       await send(page > 1 ? 'Halaman kosong. Ketik /agenda atau /dibatalkan untuk kembali ke halaman pertama.'
-        : status === 'active' ? 'Tidak ada kegiatan aktif mendatang. Kegiatan lama tetap tersedia di web. Ketik /dibatalkan untuk melihat kegiatan yang dibatalkan.' : 'Belum ada kegiatan yang dibatalkan. Ketik /agenda untuk melihat kegiatan aktif.');
+        : status === 'active' ? 'Tidak ada kegiatan pada pencarian ini. Coba /cari judul, /lampau, atau /agenda.' : 'Belum ada kegiatan yang dibatalkan. Ketik /agenda untuk melihat kegiatan aktif.');
       return;
     }
     const rows = result.events.map((event, i) => `${i + 1}. ${event.title.length > 180 ? event.title.slice(0, 177) + '…' : event.title}\n   ${schedule(event.start_time, event.end_time)}${event.lifecycle_sync === 'error' ? '\n   ⚠️ Kalender belum diperbarui' : ''}`);
-    const next = page * 10 < result.total ? `\nHalaman berikutnya: ${status === 'active' ? '/agenda' : '/dibatalkan'} ${page + 1}` : '';
-    await send(`📅 *${status === 'active' ? 'Kegiatan aktif mendatang' : 'Kegiatan dibatalkan'}* — halaman ${page}\n\n${rows.join('\n\n')}\n\n${status === 'active'
+    const next = page * 10 < result.total ? `\nHalaman berikutnya: ${text.replace(/\s+--halaman\s+\d+\s*$/,'').replace(/^\/(agenda|dibatalkan)\s+\d{1,4}(?=\s|$)/,'/$1')} --halaman ${page + 1}` : '';
+    await send(`📅 *${status === 'active' ? (filter.past?'Kegiatan lampau':filter.search||filter.from?'Hasil pencarian kegiatan':'Kegiatan aktif mendatang') : 'Kegiatan dibatalkan'}* — halaman ${page}\n\n${rows.join('\n\n')}\n\n${status === 'active'
       ? 'Untuk membatalkan, ketik: batal 1\nAlasan opsional: batal 1 Penyelenggara membatalkan'
       : 'Untuk memulihkan, ketik: aktifkan 1'}\nJika sinkronisasi gagal, ketik: sinkron 1\nNomor mengikuti daftar terakhir di chat ini dan berlaku 15 menit.${next}`, [{ text: '🌐 Riwayat Web', url: params.hostOrigin }]);
   };
   try {
     if (isList) {
-      if (!await enableConfirmationCallbacks(params.botToken, params.hostOrigin)) {
-        await send('Tombol konfirmasi belum dapat diaktifkan. Buka Pengaturan Web EasyCal dan sinkronkan webhook Telegram, lalu tampilkan daftar kembali.');
-      }
-      const argument = text.split(/\s+/)[1];
-      const page = argument ? Number(argument) : 1;
-      if (!Number.isSafeInteger(page) || page < 1 || page > 10000) await send('Gunakan /agenda atau /agenda 2 untuk memilih halaman. Untuk kegiatan dibatalkan, gunakan /dibatalkan.');
-      else await showList(command === '/agenda' ? 'active' : 'cancelled', page);
+      if(command==='/cari'&&!filter.search)await send('Contoh: /cari learning series');
+      else if (!Number.isSafeInteger(listPage) || listPage < 1 || listPage > 10000) await send('Gunakan /agenda, /agenda 2, atau /agenda YYYY-MM-DD YYYY-MM-DD.');
+      else await showList(command === '/dibatalkan' ? 'cancelled' : 'active', listPage);
       return true;
     }
     const session = await readAgendaSession(key);

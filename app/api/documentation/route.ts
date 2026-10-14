@@ -5,18 +5,22 @@ import { extractPhotoMetadata, detectWatermarkTimestamp, matchPhotoToUserEvents,
 import { uploadDocumentationPhotoToDrive } from '@/lib/google-drive-api';
 import { getUserGoogleAuth } from '@/lib/token-store';
 import { DateTime } from 'luxon';
+import { findOwnedEvent } from '@/lib/event-lifecycle-store';
+import { safeError } from '@/lib/safe-error';
 
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
     const session = await getSessionFromRequest(req);
+    if(!session)return NextResponse.json({success:false,error:'Login diperlukan.'},{status:401});
+    if(req.headers.get('origin') && req.headers.get('origin')!==new URL(req.url).origin)return NextResponse.json({success:false,error:'Origin ditolak.'},{status:403});
     let dbUser = null;
     if (session) {
       dbUser = (await getUserById(session.userId)) || (await getUserByEmail(session.email));
     }
 
-    const userId = dbUser?.id || session?.userId || req.headers.get('x-user-id') || 'web_user';
+    const userId = dbUser?.id || session.userId;
     const userAuth = await getUserGoogleAuth(userId);
 
     const formData = await req.formData();
@@ -31,6 +35,7 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+    if(file.size>8*1024*1024)return NextResponse.json({success:false,error:'Batas foto 8 MB.'},{status:413});
 
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
@@ -207,9 +212,9 @@ export async function POST(req: NextRequest) {
     });
 
   } catch (err: any) {
-    console.error('Documentation upload error:', err);
+    console.error('Documentation upload failed');
     return NextResponse.json(
-      { success: false, error: `Terjadi kesalahan saat memproses foto: ${err.message}` },
+      { success: false, error: `Terjadi kesalahan saat memproses foto: ${safeError(err)}` },
       { status: 500 }
     );
   }
@@ -217,12 +222,16 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   try {
+    const session=await getSessionFromRequest(req);
+    if(!session)return NextResponse.json({error:'Unauthorized'},{status:401});
     const { searchParams } = new URL(req.url);
     const eventId = searchParams.get('eventId');
 
     if (!eventId) {
       return NextResponse.json({ error: 'Parameter eventId diperlukan' }, { status: 400 });
     }
+    const user=await getUserById(session.userId)||await getUserByEmail(session.email);
+    if(!await findOwnedEvent({userId:session.userId,email:session.email,telegramChatId:user?.telegram_chat_id},eventId))return NextResponse.json({error:'Kegiatan tidak ditemukan.'},{status:404});
 
     const docs = await getEventDocumentations(eventId);
     return NextResponse.json({
@@ -230,6 +239,6 @@ export async function GET(req: NextRequest) {
       documentations: docs
     });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: safeError(err) }, { status: 500 });
   }
 }

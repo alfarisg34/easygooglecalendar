@@ -1,90 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getEffectiveOrigin } from '@/lib/google-auth';
+import { authorizeBotSetup, registerBot, webhookSecret } from '@/lib/telegram-security';
 
+async function telegram(token: string, method: string, body?: Record<string, unknown>) {
+  const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, { method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(body || {}),signal:AbortSignal.timeout(10000) });
+  return await response.json() as {ok:boolean;description?:string;result?:Record<string,unknown>};
+}
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json().catch(() => ({}));
-    const { botToken, webhookUrl, action } = body;
-    const effectiveToken = (botToken || process.env.TELEGRAM_BOT_TOKEN || '').trim();
-
-    if (!effectiveToken) {
-      return NextResponse.json({ 
-        ok: false, 
-        error: 'Bot Token wajib diisi atau dikonfigurasi di Environment Variable (TELEGRAM_BOT_TOKEN).' 
-      }, { status: 400 });
+    const body = await req.json() as { botToken?:string; action?:string };
+    const token = await authorizeBotSetup(req,body.botToken?.trim());
+    if (!token) return NextResponse.json({ok:false,error:'Login sebagai pemilik bot tersimpan atau admin yang diizinkan.'},{status:403});
+    if (body.action === 'set_webhook') {
+      const id = await registerBot(token);
+      const configuredWebhookUrl = `${new URL(req.url).origin}/api/telegram?bot=${id}`;
+      const result = await telegram(token,'setWebhook',{url:configuredWebhookUrl,secret_token:webhookSecret(token),
+        allowed_updates:['message','callback_query']});
+      return NextResponse.json({...result,configuredWebhookUrl});
     }
-
-    if (action === 'get_me') {
-      const res = await fetch(`https://api.telegram.org/bot${effectiveToken}/getMe`);
-      const data = await res.json();
-      return NextResponse.json(data);
+    const method = ({get_me:'getMe',get_webhook_info:'getWebhookInfo',delete_webhook:'deleteWebhook'} as Record<string,string>)[body.action || ''];
+    if (!method) return NextResponse.json({ok:false,error:'Aksi tidak dikenali.'},{status:400});
+    const result = await telegram(token,method);
+    if (method==='getWebhookInfo' && result.result?.url) {
+      const url = new URL(String(result.result.url)); url.search=''; result.result.url=url.toString();
     }
-
-    if (action === 'get_webhook_info') {
-      const res = await fetch(`https://api.telegram.org/bot${effectiveToken}/getWebhookInfo`);
-      const data = await res.json();
-      return NextResponse.json(data);
-    }
-
-    if (action === 'set_webhook') {
-      const origin = getEffectiveOrigin(req);
-      const targetWebhookUrl = webhookUrl || `${origin}/api/telegram?bot_token=${encodeURIComponent(effectiveToken)}${process.env.GEMINI_API_KEY ? `&gemini_key=${encodeURIComponent(process.env.GEMINI_API_KEY)}` : ''}`;
-
-      const res = await fetch(
-        `https://api.telegram.org/bot${effectiveToken}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}&allowed_updates=["message","edited_message","callback_query"]`
-      );
-      const data = await res.json();
-      return NextResponse.json({
-        ...data,
-        configuredWebhookUrl: targetWebhookUrl
-      });
-    }
-
-    if (action === 'delete_webhook') {
-      const res = await fetch(`https://api.telegram.org/bot${effectiveToken}/deleteWebhook`);
-      const data = await res.json();
-      return NextResponse.json(data);
-    }
-
-    return NextResponse.json({ ok: false, error: 'Aksi tidak dikenali.' }, { status: 400 });
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, error: err.message }, { status: 500 });
-  }
+    return NextResponse.json(result);
+  } catch { return NextResponse.json({ok:false,error:'Pengaturan bot gagal. Periksa konfigurasi server.'},{status:503}); }
 }
-
-export async function GET(req: NextRequest) {
-  try {
-    const origin = getEffectiveOrigin(req);
-    const { searchParams } = new URL(req.url);
-    const action = searchParams.get('action') || 'info';
-    const effectiveToken = (searchParams.get('bot_token') || searchParams.get('token') || process.env.TELEGRAM_BOT_TOKEN || '').trim();
-
-    if (!effectiveToken) {
-      return NextResponse.json({ 
-        ok: false, 
-        error: 'TELEGRAM_BOT_TOKEN belum disetel di Vercel Environment Variables atau parameter bot_token.' 
-      }, { status: 400 });
-    }
-
-    if (action === 'set' || action === 'sync') {
-      const targetWebhookUrl = `${origin}/api/telegram?bot_token=${encodeURIComponent(effectiveToken)}${process.env.GEMINI_API_KEY ? `&gemini_key=${encodeURIComponent(process.env.GEMINI_API_KEY)}` : ''}`;
-      const res = await fetch(`https://api.telegram.org/bot${effectiveToken}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}&allowed_updates=["message","edited_message","callback_query"]`);
-      const data = await res.json();
-      return NextResponse.json({
-        ok: data.ok,
-        message: data.ok ? 'Webhook Telegram berhasil disinkronkan ke domain aktif!' : data.description,
-        configuredWebhookUrl: targetWebhookUrl,
-        telegramResponse: data
-      });
-    }
-
-    const res = await fetch(`https://api.telegram.org/bot${effectiveToken}/getWebhookInfo`);
-    const data = await res.json();
-    return NextResponse.json({
-      ...data,
-      currentOrigin: origin
-    });
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, error: err.message }, { status: 500 });
-  }
+export async function GET(req:NextRequest) {
+  const token = await authorizeBotSetup(req);
+  if (!token) return NextResponse.json({ok:false,error:'Akses ditolak.'},{status:403});
+  return NextResponse.json({ok:true,service:'EasyCal',instruction:'Gunakan POST untuk pengaturan webhook.'});
 }

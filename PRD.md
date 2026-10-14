@@ -1,6 +1,20 @@
 # Product Requirements Document (PRD)
 ## EasyCal // Serverless OCR & Gemini Calendar Studio
 
+### Perluasan P0/P1 — Unreleased
+
+| Kebutuhan | Perilaku yang tersedia |
+|---|---|
+| Keamanan bot/akun | Setup hanya pemilik/admin, pemeriksaan Origin, secret webhook, kontak milik pengirim, binding dan OAuth state sekali pakai; identitas akun pada endpoint web berasal dari sesi. |
+| Ketahanan | Antrean persisten terenkripsi, deduplikasi update, lease worker/chat, percobaan ulang terbatas, ID Calendar/Drive/riwayat stabil, status dan kuota pengguna. Pemulihan tanpa pesan baru memerlukan penjadwal worker. |
+| Validasi ekstraksi | Waktu mulai tidak diketahui tetap kosong. Asumsi waktu akhir memerlukan pemeriksaan. Bot menyediakan pelengkapan dan konfirmasi; web menahan penyimpanan dan meminta koreksi sumber. |
+| Foto/album | Pilih kegiatan di Telegram, cari/paginasi kandidat, satu tujuan/ringkasan album; waktu pengambilan yang tidak diketahui tetap kosong. |
+| Perubahan | Pratinjau semula → menjadi, konfirmasi, pemeriksaan versi, audit perubahan dan undo terakhir; sumber revisi diarsipkan/dilampirkan pada kegiatan yang sama. |
+| Arsip | Tombol pemulihan unggah/lampiran dan `/arsip <nomor>`; tidak membuat event baru atau mengunggah ulang file yang sudah diketahui. |
+| Masukan/pencarian/status | Gambar sebagai document dan TXT; `/cari`, `/lampau`, rentang tanggal, `/hariini`, `/besok`, `/minggu`, `/status`, `/status cek`. |
+
+Batas dan kriteria operasional terdapat di [Telegram.md](Telegram.md). Notifikasi Telegram terjadwal, ekstraksi banyak event, deteksi bentrok, dan percakapan lewat balasan pesan tetap di luar P0/P1 ini. Perubahan belum dianggap teruji pada produksi hanya karena tes offline lulus.
+
 ---
 
 ## 1. Executive Summary & Product Vision
@@ -68,11 +82,15 @@ EasyCal menyediakan solusi terintegrasi:
 * **FR-EXT-06 (Dukungan Engine OCR Alternatif)**: Menyediakan pilihan engine ekstraksi `gemini`, `ocr_service`, atau `hybrid`.
 
 ### 3.3 Sinkronisasi Google Calendar & Ekspor
-* **FR-CAL-01 (Direct 0-Click Sync)**: Apabila akun Google terhubung, agenda hasil ekstraksi otomatis langsung di-insert ke Google Calendar tanpa aksi lanjutan.
+* **FR-CAL-01 (Direct 0-Click Sync)**: Apabila akun Google terhubung dan waktu valid tanpa asumsi yang perlu diperiksa, agenda hasil ekstraksi otomatis di-insert. Waktu tidak terbaca/default memerlukan pemeriksaan dan konfirmasi.
 * **FR-CAL-02 (Target Calendar ID)**: Pengguna dapat mengarahkan agenda ke kalender `primary` atau kalender bersama dengan menyetel Calendar ID di panel pengaturan.
 * **FR-CAL-03 (Format Deskripsi Lengkap)**: Agenda kalender memuat metadata rapi: nomor surat, link rapat, kredensial meeting, daftar narasumber, dan tautan folder Google Drive.
 * **FR-CAL-04 (Universal `.ICS` Export)**: Menyediakan generator berkas `.ics` standar RFC 5545 yang dapat diunduh langsung untuk pengguna Outlook / Apple Calendar.
 * **FR-CAL-05 (1-Click Google Calendar Link)**: Tombol generator URL `calendar.google.com/calendar/render` dengan parameter pre-filled sebagai alternatif manual.
+
+* **FR-CAL-06 (Lampiran Berkas Sumber)**: Setelah event baru dibuat dan sumber diunggah ke Drive, web dan Telegram memasang lampiran PDF, gambar undangan, atau salinan TXT pada event Google yang sama. Status lampiran dilaporkan terpisah dari keberhasilan penyimpanan event.
+* **FR-CAL-07 (Ketahanan Lampiran)**: Kegagalan Drive atau pemasangan lampiran tidak menggagalkan event dan tidak membuat event ulang. Lampiran lama dipertahankan, berkas sama dicegah duplikasinya, batas 25 lampiran diperiksa, dan konflik perubahan kalender dilaporkan.
+* **FR-CAL-08 (Izin & Batas Cakupan)**: Hak akses berkas mengikuti izin Drive tanpa berbagi publik otomatis. Event lama tidak diisi massal; foto dokumentasi, ICS, dan tautan pembuatan manual tidak memperoleh lampiran baru secara otomatis; surat revisi terkonfirmasi di bot diarsipkan dan dilampirkan pada event yang sama. Perubahan waktu/tempat tidak menghapus lampiran yang sudah ada.
 
 ### 3.4 Pengarsipan Digital Google Drive
 * **FR-DRV-01 (Setelan Root Folder)**: Pengguna dapat mengonfigurasi tautan folder induk di Google Drive melalui web atau Telegram (`/setdrive`).
@@ -92,7 +110,7 @@ EasyCal menyediakan solusi terintegrasi:
 * **FR-DUP-04 (Force Sync Override)**: Memberikan kebebasan kepada pengguna untuk memaksakan sinkronisasi (*Force Sync*) jika memang menginginkannya.
 
 ### 3.6 Bot Telegram Serverless
-* **FR-TG-01 (Multi-Modal Chat Parsing)**: Bot menerima dokumen PDF (`msg.document`), gambar poster (`msg.photo`), dan teks obrolan (`msg.text`).
+* **FR-TG-01 (Multi-Modal Chat Parsing)**: Bot menerima PDF/TXT/gambar sebagai `msg.document`, poster/foto sebagai `msg.photo`, dan teks obrolan `msg.text`.
 * **FR-TG-02 (Progress Bar Animasi)**: Memperbarui pesan secara periodik dengan bilah kemajuan dinamis (`■■■□□□□□□□`) dan teks tahapan pemindaian.
 * **FR-TG-03 (1-Tap Contact Sharing)**: Mendukung verifikasi cepat melalui tombol balasan *request_contact* Telegram untuk menautkan nomor ponsel dengan akun web.
 * **FR-TG-04 (Daftar Perintah Mandiri)**: Mendukung `/start`, `/connect`, `/status`, `/disconnect`, `/setdrive`, `/gdrive`, `/apikey`, dan `/help`.
@@ -114,16 +132,16 @@ EasyCal menyediakan solusi terintegrasi:
 ---
 
 * **FR-DOC-07 (Bukti Waktu Foto)**: Pencocokan otomatis hanya menggunakan tanggal dan jam yang valid dari EXIF atau watermark. Waktu unggah tidak boleh dipakai untuk menebak kegiatan. OCR watermark memakai model pilihan pengguna dan fallback; tanggal/jam yang tidak terbaca tidak diisi nilai default.
-* **FR-DOC-08 (Pemilihan Manual)**: Tanpa waktu foto, tanpa kandidat dalam toleransi start - 1 jam sampai end + 2 jam, atau dengan beberapa kandidat, pengguna memilih kegiatan lewat menu Foto Dokumentasi di web. Bot tidak mengunggah ke folder kegiatan atau membuat folder terpisah sebelum kegiatan diketahui. Kesamaan tanggal saja tidak cukup untuk auto-filing.
-* **FR-DOC-09 (Transparansi Waktu)**: Telegram menampilkan waktu foto dan sumber EXIF/watermark pada hasil unggahan. Web menampilkan waktu tidak terbaca untuk pilihan manual tanpa bukti waktu; metadata taken_at tetap kosong. Album diproses per foto dan caption poster diprioritaskan.
+* **FR-DOC-08 (Pemilihan Manual)**: Tanpa waktu foto, tanpa kandidat dalam toleransi start - 1 jam sampai end + 2 jam, atau dengan beberapa kandidat, pengguna memilih kegiatan lewat tombol dan pencarian di Telegram atau menu Foto Dokumentasi di web. Bot tidak mengunggah ke folder kegiatan atau membuat folder terpisah sebelum kegiatan diketahui. Kesamaan tanggal saja tidak cukup untuk auto-filing.
+* **FR-DOC-09 (Transparansi Waktu)**: Telegram menampilkan waktu foto dan sumber EXIF/watermark pada hasil unggahan. Web menampilkan waktu tidak terbaca untuk pilihan manual tanpa bukti waktu; metadata taken_at tetap kosong. Album memakai satu pilihan tujuan dan ringkasan akhir; caption poster diprioritaskan.
 
 ### 3.9 Pembaruan Kegiatan & Pemulihan Otorisasi Google
 
 * **FR-UPD-01 (Surat/Pesan Perubahan Telegram)**: Bot membaca waktu/tempat baru dari surat perubahan, ralat, atau narasi semula menjadi. Perubahan diproses sebelum penolakan duplikat dan tidak membuat event kalender baru.
-* **FR-UPD-02 (Pemilihan Kegiatan)**: Pembaruan otomatis hanya dilakukan jika satu kegiatan aktif cocok dengan judul ternormalisasi (Jaccard minimal 0,8; minimal dua kata kunci) dan tanggal semula jika tersedia, dalam 50 riwayat terbaru. Jika tidak ditemukan atau ambigu, pengguna memilih lewat `/agenda` lalu `/update <nomor> <perubahan>`; nomor berlaku 15 menit dan versi kegiatan diperiksa kembali.
+* **FR-UPD-02 (Pemilihan Kegiatan)**: Calon pembaruan dipilih jika satu kegiatan aktif cocok dengan judul ternormalisasi (Jaccard minimal 0,8; minimal dua kata kunci) dan tanggal semula jika tersedia, dalam 50 riwayat terbaru. Jika tidak ditemukan atau ambigu, pengguna memilih lewat `/agenda` lalu `/update <nomor> <perubahan>`; nomor berlaku 15 menit dan versi kegiatan diperiksa kembali.
 * **FR-UPD-03 (Perubahan Parsial)**: Perubahan jam saja mempertahankan tanggal dan durasi sebelumnya jika jam akhir baru tidak disebutkan. Perubahan tempat saja mempertahankan waktu. Nilai lama pada bagian semula tidak dipakai sebagai jadwal baru; tanggal/jam yang tidak valid ditolak.
 * **FR-UPD-04 (Identitas & Retry)**: Pembaruan mempertahankan identitas event Calendar dan folder dokumentasi. Jadwal yang diinginkan disimpan di EasyCal sebelum sinkronisasi. Kegagalan Google dilaporkan dan dapat dicoba ulang lewat daftar `/agenda` terbaru lalu `sinkron <nomor>`.
-* **FR-UPD-05 (Batas Implementasi)**: Pembaruan dari surat/pesan tersedia melalui Telegram. Kegiatan yang dibatalkan harus diaktifkan kembali; sinkronisasi sebelumnya yang gagal harus diselesaikan terlebih dahulu. Event dengan peserta undangan atau yang dihapus di Google Calendar memerlukan penanganan di Google Calendar. Surat revisi tidak otomatis diunggah sebagai arsip tambahan, dan nama folder lama tidak diubah.
+* **FR-UPD-05 (Batas Implementasi)**: Pembaruan dari surat/pesan tersedia melalui Telegram. Kegiatan yang dibatalkan harus diaktifkan kembali; sinkronisasi sebelumnya yang gagal harus diselesaikan terlebih dahulu. Event dengan peserta undangan atau yang dihapus di Google Calendar memerlukan penanganan di Google Calendar. Surat revisi diarsipkan setelah konfirmasi pengguna; nama folder lama tidak diubah.
 * **FR-UPD-06 (Penutupan Progress Telegram)**: Hasil pembaruan berhasil maupun gagal mengganti pesan progress awal. Animasi berhenti sebelum hasil ditampilkan. Jika edit pesan ditolak, hasil dikirim sebagai pesan baru; persentase animasi tidak boleh dianggap status sinkronisasi kalender setelah balasan akhir diterima.
 * **FR-AUTH-05 (Pemulihan invalid_grant)**: Kesalahan otorisasi Google menampilkan petunjuk login ulang dengan akun yang sama. `/connect` tetap menyediakan tombol Hubungkan Ulang Google untuk akun yang tercatat terhubung. Token dibaca dari database sebelum cache; pengguna mengirim ulang foto setelah otorisasi berhasil.
 

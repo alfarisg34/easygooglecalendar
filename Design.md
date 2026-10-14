@@ -1,6 +1,14 @@
 # Design & UI/UX System Document
 ## EasyCal // Industrial Cockpit & Editorial Precision
 
+### Interaksi bot P0/P1 — Unreleased
+
+Bot menampilkan tombol maksimal dua per baris agar pilihan foto/paginasi nyaman dibaca pada ponsel. Pilihan menampilkan judul dan waktu kegiatan sebelum pengguna memilih nomor. Album menerima satu tujuan dan ringkasan akhir, bukan satu balasan sukses per foto. Foto tanpa bukti waktu tetap ditandai tidak terbaca.
+
+Perubahan kegiatan menampilkan blok **Semula** dan **Menjadi** beserta waktu/tempat, diikuti **Ya, perbarui** atau **Batalkan**. Setelah diterapkan, **Batalkan perubahan terakhir** tersedia selama 15 menit selama versinya belum berubah. Hasil sinkronisasi dan arsip/lampiran tetap dibedakan, dengan tombol pemulihan ketika pengarsipan gagal. Tanggal yang tidak terbaca menampilkan instruksi `/lengkapi` lalu pratinjau sebelum Simpan.
+
+Web menampilkan kesalahan yang dapat ditindaklanjuti untuk `requiresConfirmation`, tanpa kartu hasil atau tautan kalender dengan tanggal tebakan. Pengaturan bot memakai token tersimpan milik pengguna; URL hasil setup tidak menampilkan kredensial. Pengguna tidak diminta mengisi Chat ID secara manual. Daftar perintah dan batas sesi mengikuti [Telegram.md](Telegram.md).
+
 ---
 
 ## 1. Design Philosophy & Aesthetic Identity
@@ -186,3 +194,7 @@ Lebar dashboard mengikuti viewport. Kolom grid memakai batas minimum nol agar te
 Footer tampil di bagian bawah halaman utama sebelum/sesudah login serta halaman changelog. Identitas EasyCal berada di kiri dan tautan **Versi X.Y.Z** di kanan; keduanya dapat berpindah baris pada layar sempit. Nomor versi berasal dari package.json dan dapat diklik menuju /changelog.
 
 Halaman changelog mengikuti token desain Industrial Cockpit: judul serif, versi/tanggal monospasi, kartu rilis bersasis gelap, dan badge amber. Bagian **Dalam pengembangan / Belum dirilis** dan versi saat ini terbuka secara default; rilis sebelumnya memakai kontrol details/summary yang dapat dioperasikan dengan keyboard. Setiap kategori ditampilkan sebagai daftar perubahan, termasuk hasil verifikasi dan keterbatasannya. Tombol **Kembali ke EasyCal** menuju halaman utama.
+
+## 9. Umpan Balik Lampiran Calendar
+
+Hasil ekstraksi web menampilkan pesan **Berkas undangan terlampir di event Google Calendar** dengan warna signal-green setelah pemasangan berhasil. Jika event tersimpan tetapi lampiran gagal, pesan berwarna signal-amber menjelaskan kegagalan secara terpisah; tautan event/folder yang tersedia tetap dapat dibuka. Pesan menggunakan role=status dan membungkus pada mobile. Bot Telegram menyampaikan hasil lampiran pada balasan agenda yang sama.

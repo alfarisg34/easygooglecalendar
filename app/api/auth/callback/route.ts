@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { exchangeCodeForTokens, getEffectiveOrigin, getEffectiveRedirectUri } from '@/lib/google-auth';
-import { upsertGoogleUser, updateUserSettings } from '@/lib/db';
+import { upsertGoogleUser, bindVerifiedTelegramAccount } from '@/lib/db';
 import { saveUserGoogleAuth } from '@/lib/token-store';
 import { sendTelegramMessage } from '@/lib/telegram-handler';
 import { createSessionToken, SESSION_COOKIE_NAME } from '@/lib/auth-session';
+import { consumeOAuthState, consumeTelegramBinding } from '@/lib/telegram-security';
+import { safeError } from '@/lib/safe-error';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -22,6 +24,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    const verifiedState = await consumeOAuthState(state, req.cookies.get('easycal_oauth')?.value || '');
+    if (!verifiedState) throw new Error('Sesi login tidak valid atau kedaluwarsa. Mulai login kembali.');
+    const telegramId = verifiedState.binding ? await consumeTelegramBinding(verifiedState.binding) : null;
+    if (verifiedState.binding && !telegramId) throw new Error('Tautan Telegram sudah digunakan atau kedaluwarsa. Ketik /connect kembali.');
     const { tokens, user } = await exchangeCodeForTokens(code, redirectUri);
 
     const email = user.email || 'unknown@google.com';
@@ -41,11 +47,9 @@ export async function GET(req: NextRequest) {
     });
 
     // 2. If originated from Telegram, link telegram_chat_id to user in DB
-    if (state.startsWith('tg_')) {
-      const rawTgId = state.replace('tg_', '');
-      await updateUserSettings(dbUser.id, {
-        telegram_chat_id: rawTgId
-      });
+    if (telegramId) {
+      const rawTgId = telegramId;
+      await bindVerifiedTelegramAccount(dbUser.id,rawTgId);
 
       const effectiveBotToken = process.env.TELEGRAM_BOT_TOKEN || dbUser.telegram_bot_token;
       const tgChatIdNum = parseInt(rawTgId, 10);
@@ -87,6 +91,7 @@ Sekarang setiap dokumen surat dinas, poster, atau pesan broadcast yang Anda kiri
     // 5. Create redirect response and attach HttpOnly Session Cookie
     const isProduction = process.env.NODE_ENV === 'production';
     const response = NextResponse.redirect(`${origin}/?auth=success`);
+    response.cookies.set('easycal_oauth','',{path:'/api/auth',maxAge:0});
 
     response.cookies.set({
       name: SESSION_COOKIE_NAME,
@@ -100,7 +105,7 @@ Sekarang setiap dokumen surat dinas, poster, atau pesan broadcast yang Anda kiri
 
     return response;
   } catch (err: any) {
-    console.error('Google OAuth Callback error:', err);
-    return NextResponse.redirect(`${origin}/?auth_error=${encodeURIComponent(err.message || 'Gagal memproses otorisasi Google')}`);
+    console.error('Google OAuth callback failed');
+    return NextResponse.redirect(`${origin}/?auth_error=${encodeURIComponent(safeError(err))}`);
   }
 }

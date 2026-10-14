@@ -3,9 +3,10 @@ import { cookies } from 'next/headers';
 import { NextRequest } from 'next/server';
 
 const SESSION_COOKIE_NAME = 'easycal_session';
-const SECRET_KEY = new TextEncoder().encode(
-  process.env.SESSION_SECRET || 'easycal-secure-secret-key-change-in-env-2026'
-);
+function secretKey() {
+  if (!process.env.SESSION_SECRET && process.env.NODE_ENV === 'production') throw new Error('SESSION_SECRET wajib dikonfigurasi.');
+  return new TextEncoder().encode(process.env.SESSION_SECRET || 'easycal-local-development-only');
+}
 
 export interface SessionPayload {
   userId: string;
@@ -22,7 +23,7 @@ export async function createSessionToken(payload: SessionPayload): Promise<strin
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('30d')
-    .sign(SECRET_KEY);
+    .sign(secretKey());
 }
 
 /**
@@ -30,7 +31,8 @@ export async function createSessionToken(payload: SessionPayload): Promise<strin
  */
 export async function verifySessionToken(token: string): Promise<SessionPayload | null> {
   try {
-    const { payload } = await jwtVerify(token, SECRET_KEY);
+    const { payload } = await jwtVerify(token, secretKey(), { algorithms: ['HS256'] });
+    if (typeof payload.userId !== 'string' || typeof payload.email !== 'string') return null;
     return {
       userId: payload.userId as string,
       email: payload.email as string,

@@ -1,6 +1,10 @@
 # 📅 EasyCal // Serverless OCR & Gemini Calendar Studio
 
-Versi rilis: **1.2.0**. Lihat [catatan rilis](CHANGELOG.md) untuk perubahan dan batas verifikasi.
+Versi rilis: **1.3.0**. Lihat [catatan rilis](CHANGELOG.md) untuk perubahan dan batas verifikasi.
+
+Fitur P0/P1 bot dan lampiran Calendar tersedia dalam rilis Git **1.3.0**. Lihat [panduan bot, migrasi webhook, konfigurasi worker, dan perintah baru](Telegram.md). Setelah penerapan, webhook lama wajib disinkronkan ulang melalui Pengaturan oleh pemilik bot/admin. Siapkan database persisten, `SESSION_SECRET`, `TELEGRAM_ADMIN_EMAILS` untuk bot global, serta `CRON_SECRET` untuk pemulihan antrean.
+
+Validasi lokal: `npm run lint`, `npm test` (11 suite offline), `npm run typecheck`, `npm run build`, dan `git diff --check`. Lint memakai ESLint CLI dan `eslint.config.mjs` dengan preset Next.js Core Web Vitals, menggantikan `next lint`. Hasil migrasi: 0 error dan 6 warning font/gambar/navigasi; pemeriksaan tipe tetap terpisah. `npm run telegram:worker` tersedia untuk host persisten yang membutuhkan pemicu antrean lebih sering dari cron harian bawaan. Pengujian offline tidak memverifikasi layanan produksi.
 
 
 Layanan publik **Serverless OCR & Multimodal AI** untuk mengekstrak dokumen surat dinas (PDF), poster kegiatan (JPG/PNG), dan pesan broadcast chat ke **Google Calendar** secara instan dengan otentikasi **Google OAuth 2.0**, manajemen pengaturan kredensial (BYOK), dan integrasi basis data **Neon PostgreSQL** di **Vercel**.
@@ -16,7 +20,7 @@ Layanan publik **Serverless OCR & Multimodal AI** untuk mengekstrak dokumen sura
    - Simpan Google Gemini API Key (BYOK) yang terisolasi per akun pengguna.
    - Pilih model AI: `gemini-3.6-flash`, `gemini-2.5-flash`, atau `gemini-1.5-pro`.
    - Konfigurasi Target Google Calendar ID (`primary` atau kalender bersama tim).
-   - Simpan Telegram Bot Token dan User Chat ID untuk integrasi bot Telegram pribadi.
+   - Simpan Telegram Bot Token untuk bot pribadi; tautkan identitas Telegram melalui /connect atau kontak milik pengirim.
 3. **🐘 Penyimpanan Terkelola Neon PostgreSQL (Vercel)**:
    - Data profil pengguna, token OAuth refresh, dan preferensi pengaturan tersimpan secara persisten dan aman di Neon PostgreSQL serverless.
    - Mendukung auto-migration skema database saat aplikasi berjalan.
@@ -71,28 +75,37 @@ Buka [http://localhost:3000](http://localhost:3000) di browser Anda.
 - Pembatalan mempertahankan riwayat, undangan, dan dokumentasi. Event Google yang sama diberi judul `[DIBATALKAN]`, pengingat dinonaktifkan, dan waktunya ditandai tersedia. Pemulihan mengembalikan konfigurasi sebelumnya.
 - Kegagalan sinkronisasi ditampilkan secara eksplisit; gunakan **Coba sinkronisasi lagi** di web atau `sinkron 1` pada daftar Telegram terbaru.
 - Skema tambahan dimigrasikan otomatis melalui `initDatabase`. Sesi daftar Telegram disimpan di Neon; mode lokal menggunakan file yang diabaikan Git.
-- Webhook lama otomatis ditambahkan `callback_query` ketika `/agenda` atau `/dibatalkan` digunakan pada endpoint EasyCal yang sama. Jika Telegram menolak pembaruan, sinkronkan webhook melalui Pengaturan Web.
+- Setelah penerapan keamanan P0, sinkronkan ulang webhook melalui Pengaturan Web. Hanya setup terautentikasi yang memasang secret header dan callback; membuka daftar agenda tidak mengubah webhook.
 - Fitur ini mengelola agenda EasyCal tanpa peserta undangan Google. Event yang sudah dihapus di Google Calendar perlu dipulihkan di Google Calendar sebelum sinkronisasi ulang.
 
 Verifikasi tanpa mengubah kegiatan nyata: `node --experimental-strip-types scratch/test-event-lifecycle.ts`.
 
+## Lampiran berkas sumber di Google Calendar
+
+Agenda baru yang dibuat otomatis melalui web atau Telegram melampirkan berkas sumber yang berhasil diunggah ke Drive: surat PDF, gambar undangan, atau salinan teks sebagai salinan_undangan.txt. Buka detail event Google Calendar untuk mengakses lampirannya. Izin akses berkas tetap mengikuti Google Drive; aplikasi tidak mengubahnya menjadi publik.
+
+Jika arsip atau pemasangan lampiran gagal, event tetap tersimpan dan web/bot menampilkan kegagalan lampiran secara terpisah. Lampiran yang sudah ada dipertahankan; maksimal 25 lampiran per event sesuai [Google Calendar API](https://developers.google.com/workspace/calendar/api/v3/reference/events). Fitur ini berlaku pada pembuatan agenda baru, tanpa pengisian massal event lama. Update waktu/tempat mempertahankan lampiran lama; surat revisi yang dikonfirmasi di bot ikut diarsipkan dan dilampirkan, sedangkan foto dokumentasi tidak otomatis menjadi lampiran baru. Ekspor ICS dan tautan pembuatan event manual tidak berubah.
+
+Verifikasi tanpa akun Google nyata: `node --experimental-strip-types scratch/test-calendar-attachments.ts`.
+
 ## Waktu foto dokumentasi & pemilihan kegiatan
+
 
 Foto dicocokkan memakai waktu pengambilan dari EXIF atau watermark kamera, bukan waktu saat dikirim ke bot. Misalnya, stempel 12 Oktober pukul 10.18 harus dicocokkan ke kegiatan pada waktu tersebut walaupun foto diunggah tanggal 13 Oktober.
 
-Jika tanggal/jam tidak terbaca, tidak ada kegiatan dalam toleransi satu jam sebelum sampai dua jam sesudah kegiatan, atau beberapa kegiatan cocok, bot belum mengunggah foto. Buka menu **Foto Dokumentasi** di web, unggah foto, lalu pilih kegiatan yang benar secara manual. Kesamaan tanggal saja menjadi saran, bukan dasar pengarsipan otomatis. Untuk pemilihan manual tanpa waktu pengambilan, waktu tersebut disimpan kosong; prefix nama berkas dapat memakai waktu unggah.
+Jika tanggal/jam tidak terbaca, tidak ada kegiatan dalam toleransi satu jam sebelum sampai dua jam sesudah kegiatan, atau beberapa kegiatan cocok, bot belum mengunggah foto. Pilih kegiatan melalui tombol Telegram, atau gunakan menu **Foto Dokumentasi** di web. Kesamaan tanggal saja menjadi saran, bukan dasar pengarsipan otomatis. Untuk pemilihan manual tanpa waktu pengambilan, waktu tersebut disimpan kosong; prefix nama berkas dapat memakai waktu unggah.
 
-Balasan berhasil menampilkan waktu foto dan sumber waktunya. Album diproses per foto sehingga tiga foto dapat menghasilkan tiga balasan. Caption `#poster` tetap memilih ekstraksi agenda meskipun dikirim dalam album.
+Balasan berhasil menampilkan waktu foto dan sumber waktunya. Album dikumpulkan sekitar empat detik dan memperoleh satu pilihan tujuan serta ringkasan hasil. Anggota yang terlambat dapat menjadi pekerjaan terpisah. Caption `#poster` tetap memilih ekstraksi agenda meskipun dikirim dalam album.
 
 Verifikasi tanpa layanan nyata: `node --experimental-strip-types scratch/test-photo-timestamp.ts`.
 
 ## Memperbarui waktu atau tempat melalui Telegram
 
-- Kirim surat PDF atau teks perubahan yang menyebut judul kegiatan. AI membaca nilai baru pada narasi **semula ... menjadi ...**, ralat, atau perubahan jadwal/tempat. Pembaruan otomatis hanya dilakukan jika satu kegiatan aktif cocok dengan judul dan tanggal semula (jika tersedia).
+- Kirim surat PDF atau teks perubahan yang menyebut judul kegiatan. AI membaca nilai baru pada narasi **semula ... menjadi ...**, ralat, atau perubahan jadwal/tempat. Bot memilih calon kegiatan bila judul dan tanggal semula (jika tersedia) cocok secara unik, lalu meminta konfirmasi semula ? menjadi sebelum menerapkan perubahan.
 - Jika kegiatan belum dapat ditentukan, ketik `/agenda`, lalu `/update 1 jam menjadi 13.00` atau `/update 1 tempat menjadi Ruang B`. Nomor merujuk ke daftar terakhir dan berlaku 15 menit. Untuk surat gambar, gunakan caption `#poster` agar masuk alur ekstraksi agenda.
 - Perubahan jam saja mempertahankan tanggal dan durasi lama; perubahan tempat saja mempertahankan waktu. Jika jam akhir baru disebutkan, jam tersebut digunakan. Perubahan menggunakan event Google Calendar dan folder dokumentasi yang sama.
 - Jika Google Calendar gagal diperbarui, jadwal baru disimpan di EasyCal. Ketik `/agenda` lagi, lalu `sinkron 1` sesuai nomor kegiatan untuk mencoba ulang. Pemilihan yang kedaluwarsa atau ambigu tidak membuat agenda baru.
-- Hasil update atau pesan kegagalannya mengganti pesan progress. Jika Telegram menolak edit, hasil dikirim sebagai pesan baru. Balasan sukses menunjukkan pembaruan sudah selesai; persentase animasi merupakan indikator menunggu, bukan ukuran sinkronisasi Google.
+- Hasil update atau pesan kegagalannya mengganti pesan progress. Jika Telegram menolak edit, hasil dikirim sebagai pesan baru. Setelah pratinjau dikonfirmasi, balasan sukses menunjukkan pembaruan sudah selesai; persentase animasi merupakan indikator menunggu, bukan ukuran sinkronisasi Google.
 
 Verifikasi penutupan progress tanpa chat nyata: `node --experimental-strip-types scratch/test-telegram-progress.ts`.
 
@@ -119,3 +132,7 @@ Pada mobile, empat pilihan sumber agenda tampil dalam grid 2×2. Header, banner 
 - [CHANGELOG.md](CHANGELOG.md): perubahan yang belum dirilis dan riwayat rilis.
 
 Setiap perubahan wajib memperbarui changelog dan seluruh dokumen yang terdampak sebelum pekerjaan dinyatakan selesai atau dilakukan commit, push, maupun deploy.
+
+Permintaan **push Git** mencakup rilis aplikasi: perbarui dokumentasi yang terdampak, tinjau/perbarui `.gitignore`, selaraskan versi dan catatan rilis, jalankan pemeriksaan, lalu commit dan push branch/tag sesuai [AGENTS.md](AGENTS.md). Menambahkan aturan ini tidak memulai push.
+
+Tes regresi, runner, loader, dan worker dalam `scratch/` tetap disertakan karena dipakai pengujian/CI dan operasional. Percobaan baru ditempatkan di `scratch/local/`; empat skrip percobaan lama `test-36.js`, `test-gemini.js`, `test-models.js`, serta `verify.js` tidak lagi dilacak, dengan salinan lokal tetap tersedia. `.gitignore` juga melindungi environment/kredensial lokal, cache, build, laporan pemeriksaan dan file sementara; `.env.example` tetap disertakan. Hindari mengabaikan seluruh scratch atau menghapus tes yang masih diperlukan.

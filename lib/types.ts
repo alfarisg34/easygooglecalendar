@@ -1,4 +1,6 @@
 export interface CalendarEvent {
+  validation_warnings?: string[];
+  needs_confirmation?: boolean;
   update?: EventUpdate;
   activity_status?: 'active' | 'cancelled';
   title: string;
@@ -17,6 +19,7 @@ export interface CalendarEvent {
 export interface EventUpdate {
   original_date?: string;
   date?: string;
+  end_date?: string;
   start_clock?: string;
   end_clock?: string;
   location?: string;

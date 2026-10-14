@@ -1,3 +1,4 @@
+import { createLoader } from './test-loader.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -6,14 +7,7 @@ import ts from 'typescript';
 
 const nativeRequire = createRequire(import.meta.url);
 function load<T>(file: string, mocks: Record<string, unknown>, globals: Record<string, unknown>): T {
-  const source = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: {
-    target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, esModuleInterop: true
-  } }).outputText;
-  const module = { exports: {} };
-  vm.runInNewContext(source, { module, exports: module.exports,
-    require: (id: string) => id in mocks ? mocks[id] : nativeRequire(id), Buffer, Error, console,
-    process: { env: {}, cwd: () => '/isolated' }, ...globals }, { filename: file });
-  return module.exports as T;
+  return createLoader(mocks,globals).load<T>(file);
 }
 
 async function main() {
@@ -33,7 +27,8 @@ async function main() {
     './event-update': { matchUpdateEvent: () => ({ id: 'existing', lifecycle_version: 0 }),
       updateExistingEvent: async () => { updates++; if (updateError) throw new Error('Kegiatan sudah berubah.');
         return { message: 'Waktu/tempat kegiatan diperbarui. Google Calendar sudah diperbarui.', event }; } },
-    './event-lifecycle-store': {}, './telegram-agenda': { handleTelegramAgenda: async () => false },
+    './event-lifecycle-store': {findOwnedEvent:async()=>({id:'existing',lifecycle_version:0})},
+    './telegram-workflows': {handleWorkflowInput:async()=>false,currentSource:()=>[],offerUpdateConfirmation:async()=>{updates++;if(updateError)throw new Error('Kegiatan sudah berubah.');}}, './telegram-agenda': { handleTelegramAgenda: async () => false },
     './gemini': { extractEventFromSource: async () => { if (simulateSlowProgress) void tick(); return { success: true, event }; } },
     './token-store': { getUserGoogleAuth: async () => ({ userId: 'owner', email: 'owner@example.com' }) },
     './google-calendar-api': {}, './duplicate-detector': {}, './google-drive-api': {}, './photo-matcher': {},
@@ -44,7 +39,7 @@ async function main() {
     clearInterval: () => { cleared = true; },
     fetch: async (url: string, args?: { body: string }) => {
       if (url.includes('/getFile')) return { ok: true, json: async () => ({ ok: true, result: { file_path: 'letter.pdf' } }) };
-      if (url.includes('/file/')) return { ok: true, arrayBuffer: async () => new ArrayBuffer(1) };
+      if (url.includes('/file/')) return new Response('source');
       const body = JSON.parse(args!.body) as { text?: string; message_id?: number };
       messages.push({ endpoint: url.split('/').at(-1)!, text: body.text || '', message_id: body.message_id });
       if (url.endsWith('/editMessageText') && simulateSlowProgress && body.text?.includes('%')) {
@@ -71,7 +66,7 @@ async function main() {
   assert.equal(updates, 1);
   assert.equal(messages.at(-1)?.endpoint, 'editMessageText');
   assert.equal(messages.at(-1)?.message_id, 42);
-  assert.match(messages.at(-1)!.text, /Google Calendar sudah diperbarui/);
+  assert.match(messages.at(-1)!.text, /konfirmasi/);
   assert.equal(messages.filter(message => message.endpoint === 'sendMessage').length, 1, 'Success replaces the progress message');
   const finishedCount = messages.length;
   await tick();
@@ -86,7 +81,8 @@ async function main() {
   assert.equal(messages.at(-1)?.endpoint, 'editMessageText'); assert.match(messages.at(-1)!.text, /Riwayat kegiatan belum dapat dibaca/);
   historyError = false; rejectFinalEdit = true;
   await sendPdf();
-  assert.equal(messages.at(-1)?.endpoint, 'sendMessage'); assert.match(messages.at(-1)!.text, /Google Calendar sudah diperbarui/);
-  console.log('PASS: update success/error completes original progress message, pending edits drain before completion, and failed edits fall back to a new message');
+  assert.equal(messages.at(-1)?.endpoint, 'sendMessage'); assert.match(messages.at(-1)!.text, /konfirmasi/);
+  console.log('PASS: update preview/error completes original progress message, pending edits drain before completion, and failed edits fall back to a new message');
 }
-main().catch(error => { console.error(error); process.exitCode = 1; });
+const deadline=setTimeout(()=>{console.error('FAIL: progress test stalled');process.exit(1);},15000);
+main().catch(error => { console.error(error); process.exitCode = 1; }).finally(()=>clearTimeout(deadline));

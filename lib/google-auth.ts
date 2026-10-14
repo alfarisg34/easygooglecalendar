@@ -15,14 +15,7 @@ const SCOPES = [
  * Derives the exact public origin (domain) behind reverse proxies like Vercel / Cloudflare
  */
 export function getEffectiveOrigin(req: NextRequest): string {
-  const forwardedHost = req.headers.get('x-forwarded-host') || req.headers.get('host');
-  const forwardedProto = req.headers.get('x-forwarded-proto') || 'https';
-  if (forwardedHost) {
-    const isLocal = forwardedHost.includes('localhost') || forwardedHost.includes('127.0.0.1');
-    const proto = isLocal ? 'http' : forwardedProto;
-    return `${proto}://${forwardedHost}`;
-  }
-  return req.nextUrl.origin;
+  return process.env.NEXT_PUBLIC_APP_URL ? new URL(process.env.NEXT_PUBLIC_APP_URL).origin : req.nextUrl?.origin || new URL(req.url).origin;
 }
 
 /**
@@ -64,6 +57,7 @@ export function getGoogleOAuth2Client(customRedirectUri?: string) {
  */
 export function generateGoogleAuthUrl(params: {
   userId?: string; // e.g. "tg_123456789" or "web_user"
+  state?: string;
   redirectUri?: string;
   loginHint?: string;
 }): string {
@@ -73,7 +67,7 @@ export function generateGoogleAuthUrl(params: {
     access_type: 'offline', // Critical: requests refresh_token
     prompt: 'consent',     // Forces consent prompt to guarantee refresh_token
     scope: SCOPES,
-    state: params.userId || 'web_user',
+    state: params.state,
     login_hint: params.loginHint
   });
 }

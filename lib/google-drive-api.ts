@@ -1,3 +1,4 @@
+import { safeError } from './safe-error';
 import { isInvalidGoogleGrant, GOOGLE_RECONNECT_MESSAGE } from './google-api-error';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
@@ -6,6 +7,8 @@ import { getGoogleOAuth2Client } from './google-auth';
 import { getUserGoogleAuth, saveUserGoogleAuth } from './token-store';
 import { updateUserGoogleTokens } from './db';
 import { DateTime } from 'luxon';
+import { createHash } from 'crypto';
+import { telegramContext } from './telegram-context';
 
 /**
  * Extracts a Google Drive folder ID from a full sharing URL or returns the raw ID
@@ -93,6 +96,7 @@ export async function createDriveFolder(params: {
   userId: string | number;
   folderName: string;
   parentFolderId?: string;
+  deduplicationKey?: string;
 }): Promise<{
   success: boolean;
   folderId?: string;
@@ -102,11 +106,20 @@ export async function createDriveFolder(params: {
   try {
     const drive = await getDriveClient(params.userId);
     const parentId = parseGoogleDriveFolderId(params.parentFolderId);
+    const operation=telegramContext.getStore()?.operationId;
+    const dedup=params.deduplicationKey || (operation?`folder:${operation}:${params.folderName}:${parentId||'root'}`:undefined);
+    const marker=dedup?createHash('sha256').update(dedup).digest('hex'):undefined;
+    if(marker) {
+      const existing=await drive.files.list({q:`trashed = false and appProperties has { key='easycal_key' and value='${marker}' }`,fields:'files(id,webViewLink)',pageSize:1,supportsAllDrives:true,includeItemsFromAllDrives:true},{timeout:10000,retry:false});
+      const found=existing.data.files?.[0];
+      if(found?.id)return {success:true,folderId:found.id,folderUrl:found.webViewLink||`https://drive.google.com/drive/folders/${found.id}`};
+    }
 
     const fileMetadata: any = {
       name: params.folderName,
       mimeType: 'application/vnd.google-apps.folder'
     };
+    if(marker)fileMetadata.appProperties={easycal_key:marker};
 
     if (parentId) {
       fileMetadata.parents = [parentId];
@@ -125,7 +138,7 @@ export async function createDriveFolder(params: {
       }
       // If creating inside specified parent folder failed (e.g. parent folder deleted or unshared),
       // fallback to creating folder at user's root Drive!
-      console.warn(`Drive create in parent ${parentId} failed: ${parentErr.message}. Retrying at root...`);
+      console.warn(`Drive create in parent ${parentId} failed: ${safeError(parentErr)}. Retrying at root...`);
       delete fileMetadata.parents;
       res = await drive.files.create({
         requestBody: fileMetadata,
@@ -143,8 +156,8 @@ export async function createDriveFolder(params: {
       folderUrl
     };
   } catch (err: any) {
-    console.error('Failed to create Google Drive folder:', err.message);
-    let errorMsg = `Gagal membuat folder Google Drive: ${err.message}`;
+    console.error('Failed to create Google Drive folder');
+    let errorMsg = `Gagal membuat folder Google Drive: ${safeError(err)}`;
     if (err.message?.includes('insufficient') || err.message?.includes('scope') || err.status === 403) {
       errorMsg = 'Izin Google Drive belum disetujui pada akun Google Anda. Silakan lakukan Login Ulang dengan Google untuk menyetujui izin akses Google Drive.';
     }
@@ -165,26 +178,34 @@ export async function uploadFileToDrive(params: {
   buffer: Buffer;
   fileName: string;
   mimeType: string;
+  deduplicationKey?: string;
 }): Promise<{
   success: boolean;
   fileId?: string;
   fileUrl?: string;
+  fileName?: string;
+  mimeType?: string;
   error?: string;
 }> {
   try {
     const drive = await getDriveClient(params.userId);
+    const marker=createHash('sha256').update(params.deduplicationKey||params.buffer).update(params.folderId).digest('hex');
+    const existing=await drive.files.list({q:`trashed = false and appProperties has { key='easycal_key' and value='${marker}' }`,fields:'files(id,name,mimeType,webViewLink)',pageSize:1,supportsAllDrives:true,includeItemsFromAllDrives:true},{timeout:10000,retry:false});
+    const found=existing.data.files?.[0];
+    if(found?.id)return {success:true,fileId:found.id,fileUrl:found.webViewLink||`https://drive.google.com/file/d/${found.id}/view`,fileName:found.name||params.fileName,mimeType:found.mimeType||params.mimeType};
     const readableStream = Readable.from(params.buffer);
 
     const res = await drive.files.create({
       requestBody: {
         name: params.fileName,
+        appProperties:{easycal_key:marker},
         parents: [params.folderId]
       },
       media: {
         mimeType: params.mimeType,
         body: readableStream
       },
-      fields: 'id, name, webViewLink',
+      fields: 'id, name, mimeType, webViewLink',
       supportsAllDrives: true
     });
 
@@ -194,11 +215,13 @@ export async function uploadFileToDrive(params: {
     return {
       success: true,
       fileId,
-      fileUrl
+      fileUrl,
+      fileName: res.data.name || params.fileName,
+      mimeType: res.data.mimeType || params.mimeType.split(';')[0].trim()
     };
   } catch (err: any) {
-    console.error('Failed to upload file to Google Drive:', err.message);
-    let errorMsg = `Gagal mengunggah berkas ke Google Drive: ${err.message}`;
+    console.error('Failed to upload file to Google Drive');
+    let errorMsg = `Gagal mengunggah berkas ke Google Drive: ${safeError(err)}`;
     if (err.message?.includes('insufficient') || err.message?.includes('scope') || err.status === 403) {
       errorMsg = 'Izin Google Drive belum disetujui pada akun Google Anda. Silakan lakukan Login Ulang dengan Google untuk menyetujui izin akses Google Drive.';
     }
@@ -236,6 +259,8 @@ export async function createEventFolderAndUpload(params: {
   folderUrl?: string;
   fileId?: string;
   fileUrl?: string;
+  fileName?: string;
+  mimeType?: string;
   error?: string;
 }> {
   const folderName = buildEventFolderName(params.event);
@@ -260,6 +285,8 @@ export async function createEventFolderAndUpload(params: {
   // 2. Upload file into the created folder if fileData is present
   let fileId: string | undefined;
   let fileUrl: string | undefined;
+  let uploadedFileName: string | undefined;
+  let uploadedMimeType: string | undefined;
 
   if (params.fileData) {
     const { sourceType, fileName, mimeType, base64Data, textContent } = params.fileData;
@@ -325,6 +352,10 @@ ${textContent || params.event.description || ''}
       if (uploadRes.success) {
         fileId = uploadRes.fileId;
         fileUrl = uploadRes.fileUrl;
+        uploadedFileName = uploadRes.fileName;
+        uploadedMimeType = uploadRes.mimeType;
+      } else {
+        return { success: false, folderId, folderUrl, error: uploadRes.error || 'Berkas sumber belum berhasil diunggah ke Drive.' };
       }
     }
   }
@@ -334,7 +365,9 @@ ${textContent || params.event.description || ''}
     folderId,
     folderUrl,
     fileId,
-    fileUrl
+    fileUrl,
+    fileName: uploadedFileName,
+    mimeType: uploadedMimeType
   };
 }
 
@@ -356,6 +389,7 @@ export async function uploadDocumentationPhotoToDrive(params: {
   originalFileName?: string;
   mimeType?: string;
   takenAtIso?: string;
+  deduplicationKey?: string;
 }): Promise<{
   success: boolean;
   folderId?: string;
@@ -374,7 +408,8 @@ export async function uploadDocumentationPhotoToDrive(params: {
     const folderRes = await createDriveFolder({
       userId: params.userId,
       folderName,
-      parentFolderId: params.parentFolderId
+      parentFolderId: params.parentFolderId,
+      deduplicationKey:params.event.id?`event:${params.event.id}`:undefined
     });
 
     if (!folderRes.success || !folderRes.folderId) {
@@ -412,7 +447,8 @@ export async function uploadDocumentationPhotoToDrive(params: {
     folderId: targetFolderId,
     buffer: params.buffer,
     fileName: finalFileName,
-    mimeType: targetMimeType
+    mimeType: targetMimeType,
+    deduplicationKey:params.deduplicationKey
   });
 
   if (!uploadRes.success) {

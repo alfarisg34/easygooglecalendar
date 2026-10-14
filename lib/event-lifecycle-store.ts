@@ -37,27 +37,36 @@ export async function findOwnedEvent(owner: EventOwner, id: string): Promise<Ext
   return localEvents().find(e => e.id === id && ids.includes(e.user_id)) || null;
 }
 
-export async function listOwnedAgenda(owner: EventOwner, status: 'active' | 'cancelled', page: number = 1): Promise<{ events: ExtractedEventRecord[]; total: number }> {
+export interface AgendaFilter { search?:string; from?:string; to?:string; past?:boolean; all?:boolean }
+export async function listOwnedAgenda(owner: EventOwner, status: 'active' | 'cancelled', page: number = 1, filter:AgendaFilter = {}): Promise<{ events: ExtractedEventRecord[]; total: number }> {
   const sql = await database();
   const ids = ownerIds(owner);
   const offset = (page - 1) * 10;
   const cutoff = new Date().toISOString();
+  const query=filter.search?.trim().slice(0,150)||'';
+  const pattern=`%${query.replace(/[\\%_]/g,'\\$&')}%`;
+  const from=filter.from||'0001-01-01T00:00:00Z';const to=filter.to||'9999-12-31T23:59:59Z';
+  const includeAll=Boolean(filter.all||filter.from||filter.to||query||status==='cancelled');
+  const past=Boolean(filter.past);
   if (sql) {
     const count = await sql`SELECT COUNT(*)::int AS total FROM extracted_events WHERE user_id = ANY(${ids})
-      AND activity_status = ${status} AND (${status} = 'cancelled' OR end_time::timestamptz >= ${cutoff}::timestamptz)`;
+      AND activity_status = ${status} AND (${includeAll} OR (${past} AND end_time::timestamptz < ${cutoff}::timestamptz) OR (NOT ${past} AND end_time::timestamptz >= ${cutoff}::timestamptz))
+      AND start_time::timestamptz < ${to}::timestamptz AND end_time::timestamptz >= ${from}::timestamptz AND title ILIKE ${pattern}`;
     const rows = await sql`SELECT * FROM extracted_events WHERE user_id = ANY(${ids})
-      AND activity_status = ${status} AND (${status} = 'cancelled' OR end_time::timestamptz >= ${cutoff}::timestamptz)
+      AND activity_status = ${status} AND (${includeAll} OR (${past} AND end_time::timestamptz < ${cutoff}::timestamptz) OR (NOT ${past} AND end_time::timestamptz >= ${cutoff}::timestamptz))
+      AND start_time::timestamptz < ${to}::timestamptz AND end_time::timestamptz >= ${from}::timestamptz AND title ILIKE ${pattern}
       ORDER BY start_time::timestamptz ASC, id ASC LIMIT 10 OFFSET ${offset}`;
     return { events: rows as ExtractedEventRecord[], total: Number(count[0].total) };
   }
   const events = localEvents().filter(e => ids.includes(e.user_id) && (e.activity_status || 'active') === status
-    && (status === 'cancelled' || Date.parse(e.end_time) >= Date.parse(cutoff)))
+    && (includeAll || (past ? Date.parse(e.end_time)<Date.parse(cutoff) : Date.parse(e.end_time)>=Date.parse(cutoff)))
+    && Date.parse(e.start_time)<Date.parse(to) && Date.parse(e.end_time)>=Date.parse(from) && e.title.toLowerCase().includes(query.toLowerCase()))
     .sort((a, b) => Date.parse(a.start_time) - Date.parse(b.start_time) || a.id.localeCompare(b.id));
   return { events: events.slice(offset, offset + 10), total: events.length };
 }
 
 /** Atomic version claim prevents competing web/Telegram actions from updating Google simultaneously. */
-export async function claimEventChange(owner: EventOwner, event: ExtractedEventRecord, status: 'active' | 'cancelled', reason: string, channel: 'web' | 'telegram'): Promise<ExtractedEventRecord | null> {
+export async function claimEventChange(owner: EventOwner, event: ExtractedEventRecord, status: 'active' | 'cancelled', reason: string, channel: 'web' | 'telegram', schedule?: Pick<ExtractedEventRecord,'start_time'|'end_time'|'location'>): Promise<ExtractedEventRecord | null> {
   const sql = await database();
   const version = event.lifecycle_version || 0;
   const now = new Date().toISOString();
@@ -66,6 +75,7 @@ export async function claimEventChange(owner: EventOwner, event: ExtractedEventR
   const ids = ownerIds(owner);
   if (sql) {
     const rows = await sql`UPDATE extracted_events SET activity_status = ${status}, lifecycle_version = lifecycle_version + 1,
+      start_time=COALESCE(${schedule?.start_time||null},start_time),end_time=COALESCE(${schedule?.end_time||null},end_time),location=COALESCE(${schedule?.location??null},location),
       lifecycle_sync = 'processing', lifecycle_error = NULL, lifecycle_updated_at = ${now},
       cancellation_reason = CASE WHEN ${status} = 'cancelled' THEN ${reason} ELSE cancellation_reason END,
       cancelled_at = CASE WHEN ${status} = 'cancelled' AND NOT ${retry} THEN ${now}::timestamptz ELSE cancelled_at END,
@@ -79,6 +89,7 @@ export async function claimEventChange(owner: EventOwner, event: ExtractedEventR
   if (!found || (found.lifecycle_version || 0) !== version || (found.lifecycle_sync === 'processing'
     && Date.parse(found.lifecycle_updated_at || now) > Date.now() - 120000)) return null;
   Object.assign(found, { activity_status: status, lifecycle_version: version + 1, lifecycle_sync: 'processing',
+    ...(schedule||{}),
     lifecycle_error: '', lifecycle_updated_at: now, lifecycle_channel: channel,
     ...(status === 'cancelled' ? { cancellation_reason: reason, cancelled_at: retry ? found.cancelled_at : now } : {}) });
   const historyEvent = found as ExtractedEventRecord & { lifecycle_history?: unknown[] };

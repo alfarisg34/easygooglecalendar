@@ -11,10 +11,10 @@ function load<T>(file: string, mocks: Record<string, unknown>): T {
   const source = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: {
     target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, esModuleInterop: true, jsx: ts.JsxEmit.ReactJSX
   } }).outputText;
-  const module = { exports: {} };
-  vm.runInNewContext(source, { module, exports: module.exports,
+  const sandboxModule = { exports: {} };
+  vm.runInNewContext(source, { module: sandboxModule, exports: sandboxModule.exports,
     require: (id: string) => id in mocks ? mocks[id] : nativeRequire(id), console, process }, { filename: file });
-  return module.exports as T;
+  return sandboxModule.exports as T;
 }
 
 const parser = load<typeof import('../lib/changelog')>('lib/changelog.ts', {});
