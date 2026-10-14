@@ -8,6 +8,32 @@ Format mengikuti [Keep a Changelog](https://keepachangelog.com/id/1.0.0/) dan su
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-14
+
+### Added
+
+- Footer pada halaman utama sebelum/sesudah login menampilkan versi dari package.json. Tautan versi membuka halaman publik /changelog.
+- Halaman /changelog menampilkan catatan langsung dari CHANGELOG.md, dengan versi, tanggal rilis, kategori perubahan, label Belum dirilis, serta penanda versi saat ini. Catatan versi lama dapat dibuka/tutup dan tersedia tautan kembali ke halaman utama.
+- Tes parser dan render changelog memeriksa sinkronisasi versi footer, heading rilis, baris lanjutan, serta penyajian Markdown sebagai teks/elemen React tanpa HTML mentah di scratch/test-changelog.ts.
+
+### Fixed
+
+- Pemilih sumber agenda pada layar mobile hingga 640px menggunakan susunan dua kolom × dua baris agar tab Foto Dokumentasi tidak terpotong. Tombol memiliki tinggi minimal 64px dan label dapat membungkus; layar lebih lebar tetap menggunakan satu baris.
+- Dashboard tidak lagi melebar akibat teks akun, banner Telegram, kolom grid, atau pagination riwayat. Kolom dapat menyusut mengikuti layar, tautan bot memakai label singkat pada mobile, profil/teks panjang membungkus, filter ditumpuk, dan nomor halaman berpindah baris. Lokasi kegiatan tampil membungkus pada mobile.
+
+### Changed
+
+- Rilis 1.2.0 menyelaraskan package.json, lockfile, README, serta versi footer. Halaman changelog menandai 1.2.0 sebagai versi saat ini; bagian Unreleased kosong tidak ditampilkan.
+
+### Validation
+
+- Verifikasi akhir rilis 1.2.0: build produksi beserta TypeScript dan route /changelog, tes changelog, keselarasan package/lockfile/README/footer, delapan dokumen, sembilan tautan lokal, serta git diff --check lulus. Chrome memverifikasi versi 1.2.0 sebelum/sesudah login, navigasi halaman, dan tidak adanya kartu Unreleased kosong.
+
+- `node --experimental-strip-types scratch/test-changelog.ts` lulus. Chrome headless memverifikasi versi footer sebelum/sesudah login, navigasi ke /changelog dan kembali, kontrol buka/tutup rilis, serta tampilan changelog pada 320–1280px tanpa overflow. Pemeriksaan akun memakai data tiruan; perangkat fisik dan deployment produksi belum diuji.
+- `npm run build` lulus, termasuk pemeriksaan TypeScript, setelah perbaikan dashboard lengkap. Pemeriksaan tautan dokumentasi, blok kode Markdown, dan `git diff --check` lulus; lint tetap gagal karena skrip `next lint` lama.
+- Komponen tab diuji terlebih dahulu, kemudian dashboard localhost lengkap diperiksa melalui Chrome headless pada lebar 320, 360, 390, 640, 768, dan 1280px dengan respons akun/kegiatan tiruan, email dan tautan rapat panjang, serta sepuluh halaman riwayat. Lebar halaman tidak melampaui viewport dan konten dashboard tidak terpotong; navigasi utama memakai scroll lokal. Screenshot dashboard pada 360px diperiksa secara visual.
+- Keempat tab utama dashboard dibuka pada 360px tanpa overflow halaman. Pemeriksaan ini memakai akun tiruan; sesi login produksi dan perangkat mobile fisik belum diuji. Deployment produksi perlu diverifikasi setelah push; tag rilis tidak membuktikan deployment berhasil. Skrip lint masih menggunakan `next lint` yang tidak kompatibel dengan Next.js terpasang.
+
 ## [1.1.1] - 2026-10-13
 
 ### Fixed

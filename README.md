@@ -1,6 +1,6 @@
 # 📅 EasyCal // Serverless OCR & Gemini Calendar Studio
 
-Versi rilis: **1.1.1**. Lihat [catatan rilis](CHANGELOG.md) untuk perubahan dan batas verifikasi.
+Versi rilis: **1.2.0**. Lihat [catatan rilis](CHANGELOG.md) untuk perubahan dan batas verifikasi.
 
 
 Layanan publik **Serverless OCR & Multimodal AI** untuk mengekstrak dokumen surat dinas (PDF), poster kegiatan (JPG/PNG), dan pesan broadcast chat ke **Google Calendar** secara instan dengan otentikasi **Google OAuth 2.0**, manajemen pengaturan kredensial (BYOK), dan integrasi basis data **Neon PostgreSQL** di **Vercel**.
@@ -105,6 +105,10 @@ Jika masalah berulang setiap tujuh hari, periksa status publikasi OAuth di Googl
 Verifikasi tanpa memanggil layanan nyata: `node --experimental-strip-types scratch/test-google-auth-recovery.ts`.
 
 ## Dokumentasi & aturan perubahan
+
+Footer halaman utama menampilkan nomor versi aplikasi. Klik **Versi** untuk membuka halaman publik `/changelog`, melihat perubahan yang belum dirilis serta catatan tiap versi, lalu kembali ke EasyCal. Versi footer mengikuti package.json dan isi halaman mengikuti CHANGELOG.md saat aplikasi dibangun.
+
+Pada mobile, empat pilihan sumber agenda tampil dalam grid 2×2. Header, banner Telegram, dan riwayat mengikuti lebar layar; filter ditumpuk dan nomor halaman dapat berpindah baris. Geser bilah navigasi utama untuk membuka pengaturan, integrasi Telegram, atau panduan API.
 
 - [PRD.md](PRD.md): kebutuhan dan perilaku produk.
 - [Architecture.md](Architecture.md): komponen dan alur integrasi.

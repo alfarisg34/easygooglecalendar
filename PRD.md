@@ -129,7 +129,16 @@ EasyCal menyediakan solusi terintegrasi:
 
 ---
 
+### 3.10 Informasi Versi & Catatan Rilis
+
+* **FR-REL-01 (Footer Versi)**: Halaman utama sebelum/sesudah login menampilkan footer dengan identitas EasyCal dan nomor versi dari package.json. Tautan versi menuju /changelog dan tetap terbaca pada mobile.
+* **FR-REL-02 (Halaman Publik)**: /changelog dapat diakses tanpa login dan menampilkan versi, tanggal, kategori, daftar perubahan, serta verifikasi dari CHANGELOG.md. Unreleased ditandai belum dirilis tanpa tanggal rilis; versi paket saat ini diberi penanda tersendiri.
+* **FR-REL-03 (Navigasi & Sumber Data)**: Catatan versi dapat dibuka/tutup melalui keyboard dan tersedia tautan kembali ke halaman utama. Versi dan catatan tidak disalin ke daftar UI terpisah; pembaruan isi diterapkan melalui build/deployment aplikasi.
+
+---
+
 ## 4. Non-Functional Requirements (NFR)
+
 
 ### 4.1 Performance & Latency
 * **NFR-PERF-01**: Waktu pemrosesan ekstraksi teks tidak melebihi 10 detik.

@@ -127,6 +127,10 @@ flowchart TB
 ## 4. Application Layer Breakdown
 
 ### 4.1 Presentation Layer (`app/page.tsx`, `app/globals.css`)
+
+`app/AppFooter.tsx` digunakan pada halaman utama sebelum/sesudah login dan halaman changelog. Nomor versi diimpor dari package.json sehingga footer mengikuti versi paket tanpa konstanta versi tambahan. `/changelog` adalah halaman server publik (`app/changelog/page.tsx`) yang membaca CHANGELOG.md saat render/build, mengelompokkan rilis/kategori menggunakan parser `lib/changelog.ts`, lalu menampilkan elemen React. Teks tidak disisipkan sebagai HTML mentah. Header rilis, tanggal, kategori, serta daftar bullet bersumber dari Markdown yang sama dengan dokumentasi repository; setelah catatan diubah, deployment perlu dibangun ulang.
+
+Dashboard memakai kolom `minmax(0, ...)` agar ukuran minimum konten tidak memperlebar halaman. Kelas CSS untuk banner Telegram, spesifikasi kegiatan, lokasi, dan pagination mengatur pembungkusan konten secara terarah. Pada mobile hingga 640px, pemilih sumber memakai grid 2×2, tautan bot memakai label singkat, filter ditumpuk, dan header/profil dapat membungkus. Scroll horizontal hanya dipertahankan pada navigasi utama, bukan dengan memotong overflow seluruh halaman.
 * **Single-Page Cockpit View**: Arsitektur dashboard satu halaman terpadu dengan navigasi tab reaktif:
   * Tab `extract`: Workspace ekstraksi terbagi dua kolom (*split-viewport*): zona input (PDF, Gambar, Teks) dan panel telemetri hasil ekstraksi.
   * Tab `settings`: Panel manajemen kredensial pengguna (BYOK API Key, Target Calendar, Drive Root Folder, Telegram Token).

@@ -1,5 +1,7 @@
 'use client';
 
+import AppFooter from './AppFooter';
+
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Calendar, FileText, Image as ImageIcon, MessageSquare, 
@@ -622,7 +624,7 @@ export default function HomePage() {
   // ----------------------------------------------------
   if (!user) {
     return (
-      <main className="app-container">
+      <main className="app-container app-page">
         {/* Masthead Header */}
         <header className="masthead">
           <div className="brand-badge">
@@ -641,7 +643,8 @@ export default function HomePage() {
               style={{ textDecoration: 'none', color: '#FFF', display: 'flex', alignItems: 'center', gap: '0.4rem', border: '1px solid rgba(0, 136, 204, 0.4)', background: 'rgba(0, 136, 204, 0.12)' }}
             >
               <Bot size={14} color="#0088cc" />
-              <span>@pdftogooglecalendarinvitationbot</span>
+              <span className="telegram-bot-handle">@pdftogooglecalendarinvitationbot</span>
+            <span className="telegram-bot-mobile-label">Bot Telegram</span>
             </a>
             <div className="status-badge-tag badge-online">
               <Database size={13} />
@@ -796,7 +799,8 @@ export default function HomePage() {
             </div>
           </div>
         </section>
-      </main>
+        <AppFooter />
+    </main>
     );
   }
 
@@ -804,7 +808,7 @@ export default function HomePage() {
   // RENDER: AUTHENTICATED DASHBOARD WORKSPACE
   // ----------------------------------------------------
   return (
-    <main className="app-container">
+    <main className="app-container app-page">
       {/* Top Cockpit Masthead */}
       <header className="masthead">
         <div className="brand-badge">
@@ -826,7 +830,8 @@ export default function HomePage() {
             title="Buka Chat Bot Telegram"
           >
             <Bot size={14} color="#0088cc" />
-            <span>@pdftogooglecalendarinvitationbot</span>
+            <span className="telegram-bot-handle">@pdftogooglecalendarinvitationbot</span>
+            <span className="telegram-bot-mobile-label">Bot Telegram</span>
           </a>
 
           {/* Google Calendar Connected Status Badge */}
@@ -915,8 +920,8 @@ export default function HomePage() {
       {activeView === 'extract' && (
         <div>
           {/* Telegram Bot Quick Banner */}
-          <div style={{ background: 'rgba(0, 136, 204, 0.08)', border: '1px solid rgba(0, 136, 204, 0.25)', padding: '0.85rem 1.15rem', borderRadius: 4, marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+          <div className="telegram-banner" style={{ background: 'rgba(0, 136, 204, 0.08)', border: '1px solid rgba(0, 136, 204, 0.25)', padding: '0.85rem 1.15rem', borderRadius: 4, marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <div className="telegram-banner-copy" style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
               <Bot size={20} color="#0088cc" />
               <span style={{ fontSize: '0.8125rem', color: '#FFF' }}>
                 💡 <strong>Ekstraksi via Ponsel:</strong> Kirimkan surat dinas PDF atau poster flyer ke Bot Telegram <strong>@pdftogooglecalendarinvitationbot</strong> untuk penjadwalan otomatis (*0-Click Sync*).
@@ -930,7 +935,8 @@ export default function HomePage() {
               style={{ textDecoration: 'none', background: '#0088cc', color: '#FFF', border: 'none', fontSize: '0.8rem', padding: '0.45rem 0.95rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
             >
               <ExternalLink size={13} />
-              <span>Buka @pdftogooglecalendarinvitationbot</span>
+              <span className="telegram-bot-handle">Buka @pdftogooglecalendarinvitationbot</span>
+              <span className="telegram-bot-mobile-label">Buka Bot Telegram</span>
             </a>
           </div>
 
@@ -1694,6 +1700,7 @@ export default function HomePage() {
                         return (
                           <div 
                             key={item.id}
+                            className="event-card"
                             style={{
                               background: 'var(--bg-inset)',
                               border: '1px solid rgba(255, 255, 255, 0.08)',
@@ -1770,7 +1777,7 @@ export default function HomePage() {
                             </h3>
 
                             {/* Schedule & Venue Specs */}
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.45rem', fontSize: '0.8rem', color: 'var(--text-dim)', marginBottom: '0.75rem' }}>
+                            <div className="event-specs" style={{ display: 'grid', gap: '0.45rem', fontSize: '0.8rem', color: 'var(--text-dim)', marginBottom: '0.75rem' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                                 <Clock size={13} color="var(--signal-amber)" />
                                 <span>
@@ -1780,7 +1787,7 @@ export default function HomePage() {
 
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                                 <MapPin size={13} color="var(--signal-blue)" />
-                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <span className="event-location-text">
                                   {item.location || (item.is_online ? 'Daring (Zoom/Meet)' : 'Tidak tercantum')}
                                 </span>
                               </div>
@@ -1918,7 +1925,7 @@ export default function HomePage() {
                           Halaman {eventsPage} dari {eventsTotalPages} ({eventsTotal} total)
                         </div>
 
-                        <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                        <div className="agenda-pagination-pages" style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
                           <button 
                             onClick={() => fetchEventsHistory(eventsPage - 1)}
                             disabled={eventsPage <= 1 || eventsLoading}
@@ -2368,6 +2375,7 @@ export default function HomePage() {
       {lifecycleEvent && <EventLifecycleDialog event={lifecycleEvent} busy={lifecycleBusy} error={lifecycleError}
         onClose={() => setLifecycleEvent(null)} onConfirm={reason => void handleLifecycleChange(lifecycleEvent,
           lifecycleEvent.activity_status === 'cancelled' ? 'restore' : 'cancel', reason)} />}
+      <AppFooter />
     </main>
   );
 }

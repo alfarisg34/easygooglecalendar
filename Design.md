@@ -152,6 +152,10 @@ Ruang kerja khusus untuk pengunggahan dan auto-filing foto dokumentasi fisik keg
 
 ## 5. Responsive Design & Breakpoints
 
+Pada layar hingga 640px, pemilih sumber agenda (Surat Dinas, Poster, Teks, Foto Dokumentasi) menggunakan grid dua kolom × dua baris. Ikon berada di atas label, tinggi tombol minimal 64px, dan teks dapat membungkus sehingga semua pilihan terlihat tanpa terpotong atau perlu digeser horizontal. Pada layar lebih lebar, keempat tombol tetap berjajar dalam satu baris.
+
+Lebar dashboard mengikuti viewport. Kolom grid memakai batas minimum nol agar teks panjang tidak mendorong lebar halaman. Pada mobile, tautan bot memakai label **Bot Telegram** / **Buka Bot Telegram**, email profil membungkus, header panel dapat berpindah baris, filter riwayat ditumpuk selebar panel, dan nomor pagination membungkus agar tombol Next tetap terjangkau. Lokasi kegiatan dapat membungkus; overflow tidak disembunyikan pada seluruh halaman. Navigasi utama tetap memiliki area scroll horizontal tersendiri.
+
 | Breakpoint | Penyesuaian Tata Letak |
 |---|---|
 | **Desktop (> 1024px)** | Layout grid 2 kolom penuh (`split-viewport: 1fr 1.15fr`), padding kontainer luas. |
@@ -175,3 +179,10 @@ Ruang kerja khusus untuk pengunggahan dan auto-filing foto dokumentasi fisik keg
 - Jika jadwal tersimpan di EasyCal tetapi Google Calendar belum diperbarui, pesan membedakan kedua status tersebut dan memberikan langkah `/agenda` lalu `sinkron <nomor>`.
 - Pada `/connect`, akun yang masih terhubung tetap memperoleh tombol **Hubungkan Ulang Google** serta **Buka Pengaturan Web**. Kegagalan invalid_grant mengarahkan pengguna login ulang dengan akun yang sama lalu mengirim ulang berkas.
 - Pembaruan surat/pesan ini adalah interaksi Telegram; tidak ada formulir pembaruan jadwal baru pada web. Folder dokumentasi dan identitas event kalender dipertahankan.
+
+
+## 8. Footer & Halaman Changelog
+
+Footer tampil di bagian bawah halaman utama sebelum/sesudah login serta halaman changelog. Identitas EasyCal berada di kiri dan tautan **Versi X.Y.Z** di kanan; keduanya dapat berpindah baris pada layar sempit. Nomor versi berasal dari package.json dan dapat diklik menuju /changelog.
+
+Halaman changelog mengikuti token desain Industrial Cockpit: judul serif, versi/tanggal monospasi, kartu rilis bersasis gelap, dan badge amber. Bagian **Dalam pengembangan / Belum dirilis** dan versi saat ini terbuka secara default; rilis sebelumnya memakai kontrol details/summary yang dapat dioperasikan dengan keyboard. Setiap kategori ditampilkan sebagai daftar perubahan, termasuk hasil verifikasi dan keterbatasannya. Tombol **Kembali ke EasyCal** menuju halaman utama.

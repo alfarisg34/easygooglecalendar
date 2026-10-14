@@ -99,10 +99,60 @@ body::before {
 
 /* Container */
 .app-container {
+  width: 100%;
+  min-width: 0;
   max-width: 1400px;
   margin: 0 auto;
   padding: 1.5rem clamp(1rem, 3vw, 2.5rem) 4rem;
 }
+
+.app-page { display: flex; flex-direction: column; min-height: 100svh; }
+.site-footer { margin-top: auto; padding-top: 2rem; }
+.site-footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .75rem 1.5rem;
+  border-top: var(--border-chassis);
+  padding-top: 1rem;
+  color: var(--text-dim);
+  font-size: .75rem;
+  overflow-wrap: anywhere;
+}
+.site-footer-version {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  min-height: 44px;
+  font-family: var(--font-mono);
+  color: var(--signal-amber);
+  text-decoration: none;
+}
+.site-footer-version:hover { color: var(--text-main); text-decoration: underline; }
+
+.changelog-page { max-width: 1040px; }
+.changelog-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1.5rem; margin-bottom: 2rem; }
+.changelog-eyebrow { color: var(--signal-amber); font-family: var(--font-mono); font-size: .7rem; letter-spacing: .1em; margin-bottom: .75rem; }
+.changelog-header h1 { font-family: var(--font-display); font-size: clamp(2rem, 6vw, 3rem); line-height: 1.15; font-weight: 400; margin-bottom: .75rem; }
+.changelog-intro { color: var(--text-dim); max-width: 520px; font-size: .9rem; }
+.changelog-releases { display: grid; gap: 1rem; margin-bottom: 2rem; }
+.changelog-release { min-width: 0; background: var(--bg-surface); border: var(--border-chassis); border-radius: 4px; }
+.changelog-release-summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem; padding: 1.25rem; cursor: pointer; list-style: none; }
+.changelog-release-summary::-webkit-details-marker { display: none; }
+.changelog-release-heading, .changelog-release-date { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem; }
+.changelog-release-heading h2 { font-family: var(--font-mono); font-size: 1rem; font-weight: 600; }
+.changelog-badge { color: var(--signal-amber); border: 1px solid var(--signal-amber); padding: .15rem .4rem; border-radius: 2px; font-size: .65rem; }
+.changelog-release-date { color: var(--text-dim); font-family: var(--font-mono); font-size: .7rem; }
+.changelog-chevron { flex-shrink: 0; transition: transform var(--duration-fast) ease; }
+.changelog-release[open] > summary .changelog-chevron { transform: rotate(180deg); }
+.changelog-release-body { border-top: var(--border-chassis); padding: 1.25rem; overflow-wrap: anywhere; }
+.changelog-section + .changelog-section { margin-top: 1.5rem; }
+.changelog-section h3 { font-family: var(--font-mono); font-size: .75rem; color: var(--signal-amber); margin-bottom: .65rem; }
+.changelog-section ul { padding-left: 1.25rem; color: var(--text-dim); font-size: .85rem; line-height: 1.75; }
+.changelog-section li + li { margin-top: .55rem; }
+.changelog-section code { color: var(--text-main); font-family: var(--font-mono); font-size: .9em; }
+.changelog-section a { color: var(--signal-blue); }
 
 /* Masthead Header */
 .masthead {
@@ -352,19 +402,20 @@ body::before {
 /* Split Viewport Grid */
 .split-viewport {
   display: grid;
-  grid-template-columns: 1fr 1.15fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
   gap: 2rem;
   align-items: start;
 }
 
 @media (max-width: 1024px) {
   .split-viewport {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
 /* Chassis Card */
 .chassis-card {
+  min-width: 0;
   background: var(--bg-surface);
   border: var(--border-chassis);
   border-radius: 4px;
@@ -394,6 +445,8 @@ body::before {
 }
 
 .chassis-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 1.25rem;
 }
 
@@ -627,6 +680,30 @@ body::before {
   background: var(--bg-surface-elevated);
   color: var(--signal-amber);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+@media (max-width: 640px) {
+  .tab-switcher {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tab-btn {
+    min-width: 0;
+    min-height: 64px;
+    flex-direction: column;
+    padding: 0.625rem 0.5rem;
+    line-height: 1.4;
+  }
+
+  .tab-btn svg {
+    flex-shrink: 0;
+  }
+
+  .tab-btn span {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
 }
 
 /* Dropzone */
@@ -881,3 +958,58 @@ body::before {
 .agenda-more { position: relative; }
 .agenda-more summary { cursor: pointer; padding: .2rem .5rem; color: var(--text-dim); list-style: none; }
 .agenda-more[open] button { position: absolute; right: 0; z-index: 2; min-width: 140px; padding: .65rem !important; gap: .4rem; background: var(--bg-surface-elevated) !important; border: var(--border-bright) !important; }
+
+/* Dashboard content must shrink within its grid track, including long account/meeting text. */
+.telegram-banner-copy,
+.telegram-banner-copy > span,
+.event-specs > div,
+.agenda-filters label {
+  min-width: 0;
+}
+
+.telegram-banner-copy > svg,
+.btn-tactile > svg,
+.chassis-title > svg,
+.event-specs svg,
+.user-avatar,
+.user-avatar-fallback {
+  flex-shrink: 0;
+}
+
+.telegram-banner,
+.event-card {
+  overflow-wrap: anywhere;
+}
+
+.telegram-bot-mobile-label { display: none; }
+.event-specs { grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); }
+.event-location-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agenda-pagination-pages { min-width: 0; max-width: 100%; flex-wrap: wrap; }
+
+@media (max-width: 640px) {
+  .masthead-actions,
+  .cockpit-tabs-bar,
+  .user-profile-chip,
+  .telegram-banner-copy,
+  .btn-tactile,
+  .agenda-filters label {
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .masthead-actions { width: 100%; }
+  .user-info-text { min-width: 0; overflow-wrap: anywhere; }
+  .telegram-bot-handle { display: none; }
+  .telegram-bot-mobile-label { display: inline; }
+  .telegram-banner-copy > span { overflow-wrap: anywhere; }
+  .btn-tactile { white-space: normal; }
+  .btn-tactile > span { min-width: 0; overflow-wrap: anywhere; }
+  .chassis-header { flex-wrap: wrap; gap: .65rem; }
+  .chassis-title { min-width: 0; }
+  .agenda-filters label { flex: 1 1 100%; }
+  .agenda-filters input,
+  .agenda-filters select { width: 100%; min-width: 0; }
+  .agenda-filters > button { width: 100%; min-height: 44px; }
+  .event-location-text { white-space: normal; }
+  .event-specs > div { align-items: flex-start !important; }
+}
