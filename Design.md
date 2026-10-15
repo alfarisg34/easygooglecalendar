@@ -183,7 +183,7 @@ Lebar dashboard mengikuti viewport. Kolom grid memakai batas minimum nol agar te
 
 - Panduan bot menjelaskan pengiriman surat perubahan atau pemilihan kegiatan lewat `/agenda` dan `/update 1 jam menjadi 13.00` / `/update 1 tempat menjadi Ruang B`. Nomor mengikuti daftar terakhir dan berlaku 15 menit.
 - Pembaruan berhasil menampilkan judul, waktu mulai dalam WIB, tempat, dan hasil sinkronisasi. Jika kegiatan ambigu atau versi daftar sudah berubah, bot meminta pengguna memuat daftar dan memilih kembali.
-- Hasil update mengganti pesan progress awal, termasuk ketika pemilihan atau pembaruan gagal. Animasi ditutup sebelum hasil ditampilkan sehingga pesan 93% tidak tertinggal pada alur normal. Jika Telegram menolak edit, hasil tampil sebagai pesan baru.
+- Hasil update mengganti pesan progress awal, termasuk ketika pemilihan atau pembaruan gagal. Indikator tunggu ditutup sebelum hasil ditampilkan; timer tidak memberi persentase atau menyatakan sinkronisasi Calendar. Jika Telegram menolak edit, hasil tampil sebagai pesan baru.
 - Jika jadwal tersimpan di EasyCal tetapi Google Calendar belum diperbarui, pesan membedakan kedua status tersebut dan memberikan langkah `/agenda` lalu `sinkron <nomor>`.
 - Pada `/connect`, akun yang masih terhubung tetap memperoleh tombol **Hubungkan Ulang Google** serta **Buka Pengaturan Web**. Kegagalan invalid_grant mengarahkan pengguna login ulang dengan akun yang sama lalu mengirim ulang berkas.
 - Pembaruan surat/pesan ini adalah interaksi Telegram; tidak ada formulir pembaruan jadwal baru pada web. Folder dokumentasi dan identitas event kalender dipertahankan.
@@ -198,3 +198,7 @@ Halaman changelog mengikuti token desain Industrial Cockpit: judul serif, versi/
 ## 9. Umpan Balik Lampiran Calendar
 
 Hasil ekstraksi web menampilkan pesan **Berkas undangan terlampir di event Google Calendar** dengan warna signal-green setelah pemasangan berhasil. Jika event tersimpan tetapi lampiran gagal, pesan berwarna signal-amber menjelaskan kegagalan secara terpisah; tautan event/folder yang tersedia tetap dapat dibuka. Pesan menggunakan role=status dan membungkus pada mobile. Bot Telegram menyampaikan hasil lampiran pada balasan agenda yang sama.
+
+### Feedback timeout dan retry (v1.3.1)
+
+Pesan awal menyatakan pemrosesan dimulai. Selama ekstraksi, indikator menyatakan menunggu hasil AI; status kalender dilaporkan pada hasil akhir. Gagal sementara pada percobaan 1–2 menyatakan pekerjaan menunggu worker, tidak perlu mengirim ulang, dan mengarahkan ke /status tanpa janji waktu lanjut. Hasil baru membalas pesan asal melalui [ReplyParameters Telegram](https://core.telegram.org/bots/api#replyparameters) agar respons lama tidak tampak sebagai jawaban perintah baru. Galat permanen dan batas percobaan tetap dinyatakan gagal.

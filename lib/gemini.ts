@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { telegramContext } from './telegram-context';
 import { safeError } from './safe-error';
 import { DateTime } from 'luxon';
@@ -298,6 +299,11 @@ export function normalizeModelName(rawModel?: string): string {
   return m || 'gemini-3.6-flash';
 }
 
+// Leave time for persistence and user feedback within the 60-second route budget.
+export const GEMINI_ATTEMPT_TIMEOUT_MS = 25000;
+export const GEMINI_EXTRACTION_BUDGET_MS = 40000;
+const MIN_FALLBACK_BUDGET_MS = 3000;
+
 async function callGeminiGenerateContent(params: {
   apiKey: string;
   model: string;
@@ -306,94 +312,67 @@ async function callGeminiGenerateContent(params: {
   engineUsed?: 'gemini' | 'ocr_service' | 'hybrid';
 }): Promise<ExtractionResponse> {
   const cleanApiKey = (params.apiKey || '').replace(/^["']|["']$/g, '').trim();
-  const primaryModel = normalizeModelName(params.model);
+  const modelsToTry = [normalizeModelName(params.model), 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite']
+    .filter((model, index, models) => model && models.indexOf(model) === index);
+  const context = telegramContext.getStore();
+  const operation = context ? createHash('sha256').update(context.operationId).digest('hex').slice(0, 12) : 'web';
+  const startedAt = Date.now();
+  const deadline = startedAt + GEMINI_EXTRACTION_BUDGET_MS;
+  let lastError = 'Batas waktu ekstraksi tercapai. Coba kembali beberapa saat lagi.';
+  let retryable = false;
+  const finish = (result: ExtractionResponse, canRetry = false): ExtractionResponse => {
+    if (context) context.retryableFailure = canRetry;
+    return result;
+  };
 
-  // Active 2026 Google Generative Language models with multi-tier quota fallback
-  const modelsToTry = [
-    primaryModel,
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-3.1-flash-lite'
-  ].filter((m, i, arr) => m && arr.indexOf(m) === i);
-
-  let lastError = '';
-
-  for (const currentModel of modelsToTry) {
-    const url = `${GEMINI_API_URL}/${currentModel}:generateContent?key=${encodeURIComponent(cleanApiKey)}`;
-
+  for (const [index, currentModel] of modelsToTry.entries()) {
+    const remaining = deadline - Date.now();
+    if (remaining < MIN_FALLBACK_BUDGET_MS) { retryable = true; break; }
+    const timeoutMs = Math.min(GEMINI_ATTEMPT_TIMEOUT_MS, remaining);
+    const attemptStartedAt = Date.now();
+    // Metadata only: never log prompts, model output, API keys or credential-bearing URLs.
+    const report = (outcome: string, status?: number) => console.info('Gemini attempt', {
+      operation, model: currentModel, attempt: index + 1, timeoutMs,
+      elapsedMs: Date.now() - attemptStartedAt, totalMs: Date.now() - startedAt, outcome, status
+    });
     try {
-      const response = await fetch(url, {
-        method: 'POST',
-        signal:AbortSignal.timeout(18000),
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: params.parts
-            }
-          ],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            temperature: 0.1
-          }
-        })
+      const response = await fetch(`${GEMINI_API_URL}/${currentModel}:generateContent?key=${encodeURIComponent(cleanApiKey)}`, {
+        method: 'POST', signal: AbortSignal.timeout(timeoutMs),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: params.parts }], generationConfig: { responseMimeType: 'application/json', temperature: 0.1 } })
       });
-
       const data = await response.json();
-
       if (!response.ok) {
-        const errorMsg = safeError(data.error?.message || `Google Gemini API Error (${response.status}): ${response.statusText}`);
-        console.warn(`Gemini API returned HTTP ${response.status} with model ${currentModel}: ${errorMsg}. Trying next active model in chain...`);
-        lastError = errorMsg;
-        if(response.status===429||response.status>=500) {const context=telegramContext.getStore();if(context)context.retryableFailure=true;}
-
-        // If error is 404 (model unavailable), 429 (rate-limit / quota on this model), or 503 (temporary high demand), try next active model!
-        if (response.status === 404 || response.status === 429 || response.status === 503) {
-          continue;
-        }
-
-        // For auth or payload errors (400, 401, 403), return directly
-        return {
-          success: false,
-          error: `Gagal memproses dengan Google Gemini (${currentModel}): ${errorMsg}`
-        };
+        lastError = safeError(data.error?.message || `Google Gemini API Error (${response.status})`);
+        report('http_error', response.status);
+        const transient = response.status === 429 || response.status >= 500;
+        retryable ||= transient;
+        if (response.status === 404 || transient) continue;
+        return finish({ success: false, error: `Gagal memproses dengan Google Gemini (${currentModel}): ${lastError}` });
       }
-
       const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!candidateText) {
+        report('empty_response');
         lastError = 'Google Gemini tidak mengembalikan teks respons.';
+        retryable = true;
         continue;
       }
-
       const parsedJson = parseGeminiJson(candidateText);
       if (parsedJson.is_not_event) {
-        return {
-          success: false,
-          error: parsedJson.error || 'Berkas terdeteksi sebagai foto dokumentasi fisik kegiatan, bukan poster undangan agenda.'
-        };
+        report('not_event');
+        return finish({ success: false, error: parsedJson.error || 'Berkas terdeteksi sebagai foto dokumentasi fisik kegiatan, bukan poster undangan agenda.' });
       }
-      const context=telegramContext.getStore();if(context)context.retryableFailure=false;
       const event = normalizeCalendarEvent(parsedJson);
       if (parsedJson.update && typeof parsedJson.update === 'object' && !Array.isArray(parsedJson.update)) event.update = parsedJson.update;
-
-      return {
-        success: true,
-        event,
-        rawOcrText: params.rawOcrText,
-        modelUsed: currentModel,
-        engineUsed: params.engineUsed || 'gemini'
-      };
-    } catch (err: any) {
-      lastError = safeError(err);
-      const context=telegramContext.getStore();if(context)context.retryableFailure=true;
-      console.warn(`Network error with model ${currentModel}: ${safeError(err)}.`);
+      report('success');
+      return finish({ success: true, event, rawOcrText: params.rawOcrText, modelUsed: currentModel, engineUsed: params.engineUsed || 'gemini' });
+    } catch (error) {
+      const name = error instanceof Error ? error.name : '';
+      const timeout = name === 'TimeoutError' || name === 'AbortError';
+      report(timeout ? 'timeout' : 'transport_or_response_error');
+      lastError = timeout ? 'Respons Google Gemini melewati batas waktu.' : 'Respons Google Gemini belum dapat diproses. Coba kembali beberapa saat lagi.';
+      retryable = true;
     }
   }
-
-  return {
-    success: false,
-    error: `Gagal memproses dengan Google Gemini: ${lastError}`
-  };
+  return finish({ success: false, error: `Gagal memproses dengan Google Gemini: ${lastError}` }, retryable);
 }

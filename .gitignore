@@ -71,3 +71,6 @@ Desktop.ini
 next-env.d.ts
 
 /context/
+
+# Local browser automation captures may contain private session data
+/.playwright-mcp/

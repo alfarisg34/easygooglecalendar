@@ -8,6 +8,30 @@ Format mengikuti [Keep a Changelog](https://keepachangelog.com/id/1.0.0/) dan su
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-15
+
+### Fixed
+
+- Ekstraksi agenda Gemini tidak lagi memberi 18 detik baru untuk setiap model tanpa batas total. Setiap model kini mendapat maksimal 25 detik dengan anggaran rangkaian 40 detik, termasuk pembacaan respons; fallback memakai sisa waktu. Penolakan autentikasi/validasi menghentikan retry meskipun model sebelumnya timeout. Unduhan/OCR/database/Calendar di luar anggaran ini masih dapat menghabiskan batas hosting.
+- Hasil AI Telegram yang berhasil, termasuk perubahan waktu/tempat, disimpan terenkripsi sebelum dispatch dan dipakai kembali pada retry operasi/pemilik/sumber yang sama. Gagal menyimpan hasil menahan dispatch; hasil AI gagal tidak dicache.
+- Progres Telegram tidak lagi naik ke 86–96% atau mengklaim sinkronisasi Calendar berdasarkan timer. Kegagalan sementara pada percobaan 1–2 menjelaskan pekerjaan menunggu worker dan sumber tidak perlu dikirim ulang. Balasan handler menunjuk pesan asal agar hasil lama tidak tertukar dengan perintah baru.
+
+### Added
+
+- Diagnostik Gemini per model mencatat durasi, batas waktu, nomor percobaan, outcome, status HTTP dan hash operasi tanpa isi undangan, keluaran AI atau API key. Suite regresi baru mencakup batas waktu total/body, fallback, hasil di atas 18 detik, penghentian retry pada penolakan izin, cache perubahan dan feedback retry.
+
+### Changed
+
+- Rilis patch 1.3.1 menyelaraskan package.json, package-lock.json, README, footer berbasis versi paket dan halaman changelog; catatan terkait dipindahkan dari Unreleased tanpa mengubah riwayat rilis sebelumnya.
+- Panduan bot, arsitektur, kontrak state ai-result, aturan engineering, desain progres dan target performa diselaraskan; target teks di bawah 10 detik dibedakan dari batas eksekusi dan latensi layanan eksternal. Capture Playwright lokal (.playwright-mcp) diabaikan Git karena dapat memuat data sesi privat.
+
+### Validation
+
+- Verifikasi persiapan rilis 1.3.1 (2026-10-15): npm test (12 suite offline), npm run lint (0 error, 6 warning lama), npm run typecheck, npm run build, konsistensi versi paket/dokumentasi, 21 tautan lokal, pemeriksaan 21 berkas rilis terhadap kredensial lokal/artefak privat, serta git diff --check lulus. Tidak ada layanan Google/Telegram produksi yang dipanggil oleh suite offline.
+- Dua belas suite offline dan pemeriksaan TypeScript lulus; ESLint lulus dengan 0 error dan 6 warning yang sudah ada. Pengujian awal menemukan harness yang memakai ulang update_id untuk dua pesan berbeda dan pemeriksaan reply yang juga menangkap panggilan API langsung; harness diperbaiki agar menguji pesan berbeda serta balasan handler, lalu seluruh suite lulus. Tes memakai filesystem/layanan tiruan dan jam simulasi, bukan pengukuran latensi Google produksi.
+- Sebelum perbaikan lokal, browser produksi memverifikasi login setelah SESSION_SECRET diatur, hasil agenda Telegram, konfirmasi perubahan ke 16 Oktober 2026 13.00–14.00 WIB/Ruang Uji Revisi pada event Calendar yang sama, serta lampiran awal dan revisi. Timeout nyata teramati, tetapi penyebab latensi jaringan/Google belum dapat ditentukan dari log lama. Perbaikan dalam rilis Git ini belum diuji dengan Gemini produksi; status deployment dan hasil pipeline perlu diverifikasi terpisah.
+- Build produksi final, 21 tautan dokumentasi lokal, konsistensi batas waktu/cache/pesan retry, pola ignore capture browser dan git diff --check lulus. Build tetap memberi warning fs/zlib bawaan; peringatan module type pada runner tes tidak menggagalkan suite. Penerbitan branch/tag Git tidak membuktikan keberhasilan deployment atau perbaikan latensi layanan produksi.
+
 ## [1.3.0] - 2026-10-14
 
 ### Security

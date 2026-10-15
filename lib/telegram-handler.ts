@@ -11,7 +11,7 @@ import { matchUpdateEvent } from './event-update';
 import { findOwnedEvent } from './event-lifecycle-store';
 import { readAgendaSession } from './event-lifecycle-store';
 import { TelegramUpdate, CalendarEvent } from './types';
-import { extractEventFromSource } from './gemini';
+import { extractTelegramEvent, extractionFailureNotice } from './telegram-extraction';
 import { DateTime } from 'luxon';
 import { handleTelegramAgenda } from './telegram-agenda';
 import { getUserGoogleAuth, deleteUserGoogleAuth } from './token-store';
@@ -94,6 +94,8 @@ export async function sendTelegramMessage(params: {
     parse_mode: 'Markdown',
     disable_web_page_preview: false
   };
+  const replyTo = telegramContext.getStore()?.replyToMessageId;
+  if (replyTo) bodyPayload.reply_parameters = { message_id: replyTo, allow_sending_without_reply: true };
 
   if (params.inlineButtons && params.inlineButtons.length > 0) {
     bodyPayload.reply_markup = {
@@ -184,18 +186,6 @@ export function startTelegramProgressBar(params: {
   let isStopped = false;
   let pendingEdit: Promise<boolean> | null = null;
 
-  const dynamicStages = [
-    { emote: '⏳', action: 'Mengunduh & memverifikasi dokumen surat', detail: 'Memeriksa format berkas & membaca dokumen...' },
-    { emote: '🔍', action: 'Memindai tata letak visual & kop instansi', detail: 'Mendeteksi nomor surat, sifat & perihal agenda...' },
-    { emote: '🧠', action: 'Menganalisis isi surat dengan Google Gemini AI', detail: 'Mengekstrak tanggal pelaksanaan & jam rapat (WIB)...' },
-    { emote: '📝', action: 'Mengekstrak narasumber, ruang rapat & lokasi', detail: 'Mengidentifikasi ruangan gedung / link platform Zoom...' },
-    { emote: '⚡', action: 'Mendeteksi kredensial Zoom & link meeting', detail: 'Mencari ID Zoom, Passcode, link registrasi & materi...' },
-    { emote: '🔗', action: 'Mengekstrak bobot Jam Pelajaran (JP)', detail: 'Memeriksa jumlah JP sertifikat & daftar peserta...' },
-    { emote: '🤖', action: 'Menjalankan penalaran AI & parsing format', detail: 'Standardisasi format ISO 8601 & zona waktu Asia/Jakarta...' },
-    { emote: '📅', action: 'Menyiapkan event Google Calendar', detail: 'Memvalidasi tautan & deskripsi lengkap agenda rapat...' },
-    { emote: '✨', action: 'Memproses sinkronisasi 0-Click Calendar', detail: 'Menghubungkan langsung ke kalender akun Google Anda...' }
-  ];
-
   const intervalId = setInterval(async () => {
     if (isStopped) {
       clearInterval(intervalId);
@@ -204,21 +194,13 @@ export function startTelegramProgressBar(params: {
     if (pendingEdit) return;
 
     elapsedTicks++;
-    const stageIndex = Math.min(elapsedTicks - 1, dynamicStages.length - 1);
-    const stage = dynamicStages[stageIndex];
-    
-    // Smooth asymptotic progress calculation (15% -> 32% -> 48% -> 62% -> 74% -> 83% -> 89% -> 93% -> 96%)
-    const progress = Math.min(96, Math.round(15 + (81 * (1 - Math.exp(-elapsedTicks / 3.8)))));
-    const filledBlocks = Math.min(10, Math.max(1, Math.round(progress / 10)));
-    const bar = '■'.repeat(filledBlocks) + '□'.repeat(10 - filledBlocks);
-
     const typeLabel = fileType === 'pdf' ? 'Surat PDF' : fileType === 'image' ? 'Poster Flyer' : 'Teks Undangan';
     const dots = '.'.repeat((elapsedTicks % 3) + 1);
 
     const updateText = 
-      `${stage.emote} *[${bar}] ${progress}%* ${stage.action}${dots}\n\n` +
+      `⏳ *Menunggu hasil ekstraksi AI${dots}*\n\n` +
       `📄 *Berkas*: \`${fileName}\` (${typeLabel})\n` +
-      `💡 *Status*: _${stage.detail}_`;
+      `💡 *Status*: _Durasi bergantung pada respons layanan AI. Status kalender dilaporkan pada hasil akhir._`;
 
     pendingEdit = editTelegramMessage({
       botToken,
@@ -341,6 +323,7 @@ export async function handleTelegramWebhook(
   const userId = msg.from.id;
   if(msg.chat.type!=='private') {await sendTelegramMessage({botToken,chatId,text:'Gunakan chat pribadi dengan bot untuk menjaga undangan dan akun Anda.'});return {ok:true};}
   const context=telegramContext.getStore()!;
+  context.replyToMessageId = msg.message_id;
   context.source=msg.document?{fileId:msg.document.file_id,fileName:msg.document.file_name,mimeType:msg.document.mime_type,sourceType:/image\//i.test(msg.document.mime_type||'')||/\.(jpe?g|png|webp)$/i.test(msg.document.file_name||'')?'image':/\.txt$/i.test(msg.document.file_name||'')||msg.document.mime_type==='text/plain'?'text':'pdf'}
     :msg.photo?.length?{fileId:msg.photo[msg.photo.length-1].file_id,fileName:'gambar_telegram.jpg',mimeType:'image/jpeg',sourceType:'image'}
     :{textContent:msg.text||'',fileName:'salinan_undangan.txt',mimeType:'text/plain',sourceType:'text'};
@@ -693,13 +676,13 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
 
     try {
       const { base64Data, mimeType } = await downloadTelegramFile({ botToken, fileId: doc.file_id });
-      const result = await extractEventFromSource({
+      const result = await extractTelegramEvent({
         apiKey: effectiveGeminiKey,
         model: dbUser?.model_name || botAdmin?.model_name || 'gemini-2.0-flash',
         sourceType: 'pdf',
         base64Data,
         mimeType
-      });
+      }, owner.userId);
 
       if (progressTracker) await progressTracker.stop();
 
@@ -710,13 +693,13 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
             botToken,
             chatId,
             messageId: initRes.message_id,
-            text: `❌ *Gagal mengekstrak jadwal:* ${errMsg}`
+            text: extractionFailureNotice(errMsg)
           });
         } else {
           await sendTelegramMessage({
             botToken,
             chatId,
-            text: `❌ *Gagal mengekstrak jadwal:* ${errMsg}`
+            text: extractionFailureNotice(errMsg)
           });
         }
         return { ok: true };
@@ -931,13 +914,13 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
       }
 
       // BRANCH B: Poster Flyer (Standard Extraction & Calendar Sync)
-      const result = await extractEventFromSource({
+      const result = await extractTelegramEvent({
         apiKey: effectiveGeminiKey,
         model: dbUser?.model_name || botAdmin?.model_name || 'gemini-2.0-flash',
         sourceType: 'image',
         base64Data,
         mimeType
-      });
+      }, owner.userId);
 
       if (progressTracker) await progressTracker.stop();
 
@@ -962,13 +945,13 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
             botToken,
             chatId,
             messageId: initRes.message_id,
-            text: `❌ *Gagal mengekstrak jadwal poster:* ${errMsg}`
+            text: extractionFailureNotice(errMsg)
           });
         } else {
           await sendTelegramMessage({
             botToken,
             chatId,
-            text: `❌ *Gagal mengekstrak jadwal poster:* ${errMsg}`
+            text: extractionFailureNotice(errMsg)
           });
         }
         return { ok: true };
@@ -1022,7 +1005,7 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
     const initRes = await sendTelegramMessage({
       botToken,
       chatId,
-      text: `⏳ *[■□□□□□□□□□] 15%* Menganalisis pesan undangan rapat...\n\n💬 *Teks*: "${text.substring(0, 50)}..."\n💡 *Status*: _Memindai struktur teks & tanggal..._`
+      text: `⏳ *Memulai pemrosesan* Menganalisis pesan undangan rapat...\n\n💬 *Teks*: "${text.substring(0, 50)}..."\n💡 *Status*: _Memindai struktur teks & tanggal..._`
     });
 
     const progressTracker = initRes.message_id ? startTelegramProgressBar({
@@ -1034,12 +1017,12 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
     }) : null;
 
     try {
-      const result = await extractEventFromSource({
+      const result = await extractTelegramEvent({
         apiKey: effectiveGeminiKey,
         model: dbUser?.model_name || botAdmin?.model_name || 'gemini-2.0-flash',
         sourceType: 'text',
         text
-      });
+      }, owner.userId);
 
       if (progressTracker) await progressTracker.stop();
 
@@ -1050,13 +1033,13 @@ Bot ini otomatis mengekstrak informasi kegiatan dari surat dinas PDF, poster fly
             botToken,
             chatId,
             messageId: initRes.message_id,
-            text: `❌ *Gagal mengekstrak jadwal teks:* ${errMsg}`
+            text: extractionFailureNotice(errMsg)
           });
         } else {
           await sendTelegramMessage({
             botToken,
             chatId,
-            text: `❌ *Gagal mengekstrak jadwal teks:* ${errMsg}`
+            text: extractionFailureNotice(errMsg)
           });
         }
         return { ok: true };

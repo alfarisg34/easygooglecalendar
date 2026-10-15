@@ -166,3 +166,7 @@ Ketika pengguna meminta push Git, ikuti [alur wajib di AGENTS.md](AGENTS.md): ti
 
 Pertahankan tes regresi `scratch/test-*.ts`, loader, runner, worker dan tes unit lain yang diperlukan; jangan mengabaikan seluruh folder scratch. Tempatkan percobaan baru di `scratch/local/` dan hasil pemeriksaan di lokasi laporan/cache yang diabaikan. Empat percobaan lama `test-36.js`, `test-gemini.js`, `test-models.js`, dan `verify.js` tetap boleh ada secara lokal tetapi tidak dilacak. Kredensial/state lokal, environment selain `.env.example`, cache, build, laporan QA dan file sementara mengikuti `.gitignore`. Jika file sudah dilacak, hentikan pelacakannya tanpa menghapus salinan lokal ketika memang tidak diperlukan dalam repositori.
 
+
+### Ketahanan permintaan AI dan korelasi pesan
+
+Ekstraksi agenda Gemini wajib memakai anggaran total 40 detik (fetch dan pembacaan body), maksimum 25 detik per model, dan fallback sesuai sisa waktu. Jangan menaikkan timeout setiap model tanpa memperhitungkan total durasi serverless serta operasi lain. Hasil AI Telegram yang berhasil harus disimpan terenkripsi sebelum dispatch, termasuk perubahan; retry memakai hasil tersebut untuk operasi/pemilik/sumber yang sama. Indikator menunggu tidak boleh mengklaim progres Calendar berdasarkan timer. Balasan handler mengacu ke pesan asal, dan kegagalan sementara menjelaskan status retry/scheduler. Diagnostik model hanya memuat metadata model/durasi/status/outcome dan hash operasi, tanpa sumber undangan, keluaran AI atau kredensial. Capture browser lokal .playwright-mcp wajib diabaikan Git.

@@ -83,7 +83,7 @@ async function processJob(row:BotState<TelegramJob>):Promise<boolean> {
     try {
       const {handleTelegramWebhook,sendTelegramMessage}=await import('./telegram-handler');
       const {handleDocumentationAlbum}=await import('./telegram-workflows');
-      const context:{operationId:string;album:boolean;notices:string[];retryableFailure?:boolean}={operationId:row.id,album:job.updates.length>1,notices:[]};
+      const context={operationId:row.id,album:job.updates.length>1,notices:[] as string[],retryableFailure:false,attempt:claimed.attempts,managedRetry:true};
       await telegramContext.run(context,async()=>{
         if(job.updates.length>1 && !job.updates.some(u=>/#poster|#agenda|#jadwal|#kalender|#flyer/i.test(u.message?.caption||''))) {
           await handleDocumentationAlbum(job.updates,job.botToken,job.origin);

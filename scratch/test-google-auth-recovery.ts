@@ -69,8 +69,9 @@ async function main() {
   }, { fetch: async (_url: string, args: { body: string }) => {
     messages.push(JSON.parse(args.body)); return { ok: true, json: async () => ({ ok: true }) };
   } });
-  const send = async (text: string) => handler.handleTelegramWebhook({ update_id: 1, message: {
-    message_id: 1, from: { id: 123, is_bot: false, first_name: 'User' }, chat: { id: 123, type: 'private' }, date: 0, text
+  let nextMessageId = 0;
+  const send = async (text: string) => handler.handleTelegramWebhook({ update_id: ++nextMessageId, message: {
+    message_id: nextMessageId, from: { id: 123, is_bot: false, first_name: 'User' }, chat: { id: 123, type: 'private' }, date: 0, text
   } }, 'test-bot', 'test-key', 'https://example.com');
   await send('/update 1 jam 13.00');
   assert.equal(updates, 1); assert.equal(selected, 'older-event-outside-recent-history'); assert.equal(inserts, 0);

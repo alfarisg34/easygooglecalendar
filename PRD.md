@@ -142,7 +142,7 @@ EasyCal menyediakan solusi terintegrasi:
 * **FR-UPD-03 (Perubahan Parsial)**: Perubahan jam saja mempertahankan tanggal dan durasi sebelumnya jika jam akhir baru tidak disebutkan. Perubahan tempat saja mempertahankan waktu. Nilai lama pada bagian semula tidak dipakai sebagai jadwal baru; tanggal/jam yang tidak valid ditolak.
 * **FR-UPD-04 (Identitas & Retry)**: Pembaruan mempertahankan identitas event Calendar dan folder dokumentasi. Jadwal yang diinginkan disimpan di EasyCal sebelum sinkronisasi. Kegagalan Google dilaporkan dan dapat dicoba ulang lewat daftar `/agenda` terbaru lalu `sinkron <nomor>`.
 * **FR-UPD-05 (Batas Implementasi)**: Pembaruan dari surat/pesan tersedia melalui Telegram. Kegiatan yang dibatalkan harus diaktifkan kembali; sinkronisasi sebelumnya yang gagal harus diselesaikan terlebih dahulu. Event dengan peserta undangan atau yang dihapus di Google Calendar memerlukan penanganan di Google Calendar. Surat revisi diarsipkan setelah konfirmasi pengguna; nama folder lama tidak diubah.
-* **FR-UPD-06 (Penutupan Progress Telegram)**: Hasil pembaruan berhasil maupun gagal mengganti pesan progress awal. Animasi berhenti sebelum hasil ditampilkan. Jika edit pesan ditolak, hasil dikirim sebagai pesan baru; persentase animasi tidak boleh dianggap status sinkronisasi kalender setelah balasan akhir diterima.
+* **FR-UPD-06 (Penutupan Progress Telegram)**: Hasil pembaruan berhasil maupun gagal mengganti pesan progress awal. Animasi berhenti sebelum hasil ditampilkan. Jika edit pesan ditolak, hasil dikirim sebagai pesan baru; indikator tunggu tidak boleh memberi persentase atau mengklaim sinkronisasi kalender berdasarkan timer.
 * **FR-AUTH-05 (Pemulihan invalid_grant)**: Kesalahan otorisasi Google menampilkan petunjuk login ulang dengan akun yang sama. `/connect` tetap menyediakan tombol Hubungkan Ulang Google untuk akun yang tercatat terhubung. Token dibaca dari database sebelum cache; pengguna mengirim ulang foto setelah otorisasi berhasil.
 
 ---
@@ -159,7 +159,7 @@ EasyCal menyediakan solusi terintegrasi:
 
 
 ### 4.1 Performance & Latency
-* **NFR-PERF-01**: Waktu pemrosesan ekstraksi teks tidak melebihi 10 detik.
+* **NFR-PERF-01**: Target respons ekstraksi teks normal di bawah 10 detik, bukan jaminan latensi layanan AI. Rangkaian generateContent memiliki batas total 40 detik dan maksimum 25 detik per model; fallback memakai sisa waktu. Unduhan/OCR/database/Calendar berada di luar anggaran AI ini.
 * **NFR-PERF-02**: Waktu pemrosesan dokumen PDF/Gambar via Gemini Multimodal Vision berada di rentang 8–25 detik.
 * **NFR-PERF-03**: Serverless Function Execution Timeout disetel pada `maxDuration = 60` detik untuk mengakomodasi pemrosesan dokumen besar di Vercel.
 
@@ -181,3 +181,7 @@ EasyCal menyediakan solusi terintegrasi:
 2. **Duplicate Prevention Rate**: Berhasil mengidentifikasi minimal 90% broadcast duplikat lintas kanal (WhatsApp vs PDF).
 3. **Time-to-Schedule**: Mengurangi waktu pencatatan agenda dari rata-rata 3–5 menit (manual) menjadi < 15 detik (otomatis).
 4. **Zero-Click Adoption**: Lebih dari 80% agenda berhasil disinkronisasi langsung ke Google Calendar tanpa penyesuaian manual.
+
+### Penanganan timeout (v1.3.1)
+
+Hasil ekstraksi Telegram yang berhasil, termasuk perubahan, disimpan sebelum dispatch dan digunakan ulang saat retry operasi yang sama. Kegagalan sementara membedakan menunggu worker dari kegagalan final; hasil handler membalas pesan asal agar keterlambatan tidak disalahartikan sebagai respons perintah terbaru. Indikator menunggu AI tidak menyatakan progres Calendar. Batas tiga percobaan dan kebutuhan scheduler tetap berlaku.

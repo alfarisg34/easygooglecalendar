@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS telegram_state (
 CREATE INDEX IF NOT EXISTS telegram_state_due_idx ON telegram_state (kind, due);
 ```
 
-`payload` adalah base64 dari IV 12 byte, ciphertext JSON, dan authentication tag 16 byte (AES-256-GCM; kunci SHA-256 dari SESSION_SECRET). `version` mendukung compare-and-swap, sedangkan `due`/`expires` adalah epoch milidetik. Kind meliputi bot, binding, oauth, job, lock, admission, quota, extraction, status, action, notice, dan source-archive. Retensi dan kebijakan rotasi kunci ada di [Telegram.md](Telegram.md). Pengembangan tanpa database menggunakan `.telegram_state.json` yang diabaikan Git.
+`payload` adalah base64 dari IV 12 byte, ciphertext JSON, dan authentication tag 16 byte (AES-256-GCM; kunci SHA-256 dari SESSION_SECRET). `version` mendukung compare-and-swap, sedangkan `due`/`expires` adalah epoch milidetik. Kind meliputi bot, binding, oauth, job, lock, admission, quota, extraction, ai-result, status, action, notice, dan source-archive. Retensi dan kebijakan rotasi kunci ada di [Telegram.md](Telegram.md). Pengembangan tanpa database menggunakan `.telegram_state.json` yang diabaikan Git.
 
 Job menyimpan update, kredensial bot terenkripsi, origin, status pending/processing/done/failed, attempts, leaseUntil dan receivedAt. Kunci job menggabungkan hash bot dengan update_id atau identitas album/chat. Action menyimpan pemilik, aktor, chat, bot, ID/versi kegiatan, snapshot sebelum/sesudah, referensi file Telegram atau teks, pilihan kandidat, lease dan status konsumsi. Biner unduhan tidak disimpan dalam action. `source-archive` menghubungkan metadata berkas revisi dengan kegiatan/pemilik selama satu tahun. Ini tidak mengubah format plaintext kredensial yang sudah ada pada tabel users.
 
@@ -375,3 +375,9 @@ Bila sistem dijalankan tanpa koneksi `DATABASE_URL`:
 | **Pencocokan Foto Dokumentasi (`getRecentExtractedEventsForUser`)** | Mengambil agenda dalam rentang waktu foto (toleransi `start - 1 jam` s.d. `end + 2 jam`). | Evaluasi komputasi in-memory berbobot kedekatan temporal. |
 | **Riwayat Dokumentasi per Agenda (`getEventDocumentations`)** | Mengambil seluruh foto terhubung ke agenda tertentu. | Memanfaatkan indeks `idx_event_docs_event`. |
 
+
+### Cache hasil AI Telegram (v1.3.1)
+
+State `ai-result:<operationId>:<fingerprint>` menyimpan `{ success: true, event: CalendarEvent, modelUsed?, engineUsed? }` terenkripsi selama tujuh hari. Fingerprint SHA-256 meliputi pemilik, jenis sumber, teks/base64 sumber dan MIME; biner asli/API key tidak disimpan pada cache ini. Event mempertahankan update parsial serta peringatan. Hasil gagal tidak disimpan. Ini terpisah dari state extraction lama pada dispatch agenda baru dan tidak mengubah tabel extracted_events.
+
+Konteks eksekusi AsyncLocalStorage menambahkan attempt (nomor percobaan pekerjaan), managedRetry dan replyToMessageId; field ini tidak menambah kolom database. sendMessage memakai reply_parameters `{ message_id, allow_sending_without_reply: true }`; editMessageText tidak mengirim parameter reply.

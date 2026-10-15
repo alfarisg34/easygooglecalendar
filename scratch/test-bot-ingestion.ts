@@ -4,7 +4,7 @@ import { createLoader } from './test-loader.ts';
 import type { TelegramUpdate,ExtractionRequest } from '../lib/types';
 
 async function main() {
-  const extractions:ExtractionRequest[]=[];const messages:string[]=[];let inserts=0;let downloads=0;let fileContent='Undangan rapat pada tanggal 20 Oktober 2099 pukul 09.00 sampai 11.00 di Ruang A.';
+  const replyIds:Array<number|undefined>=[];const extractions:ExtractionRequest[]=[];const messages:string[]=[];let inserts=0;let downloads=0;let fileContent='Undangan rapat pada tanggal 20 Oktober 2099 pukul 09.00 sampai 11.00 di Ruang A.';
   const env:Record<string,string>={};
   const runtime=createLoader({
     './telegram-agenda':{handleTelegramAgenda:async()=>false},'./telegram-workflows':{handleWorkflowInput:async()=>false,currentSource:()=>[]},
@@ -17,7 +17,12 @@ async function main() {
   },{process:{env,cwd:()=>'/isolated'},fetch:async(url:string,args?:{body:string})=>{
     if(url.includes('/getFile'))return Response.json({ok:true,result:{file_path:'raw.bin'}});
     if(url.includes('/file/')){downloads++;return new Response(fileContent);}
-    if(args?.body)messages.push(JSON.parse(args.body).text||'');
+    if(args?.body) {
+      const payload=JSON.parse(args.body);
+      messages.push(payload.text||'');
+      if(url.endsWith('/sendMessage'))replyIds.push(payload.reply_parameters?.message_id);
+      if(url.endsWith('/editMessageText'))assert.equal(payload.reply_parameters,undefined);
+    }
     return Response.json({ok:true,result:{message_id:1}});
   }});
   const handler=runtime.load<typeof import('../lib/telegram-handler')>('lib/telegram-handler.ts');
@@ -28,6 +33,7 @@ async function main() {
   const txt=make(2);txt.message!.document={file_id:'txt',file_name:'undangan.txt',mime_type:'text/plain'};
   await handler.handleTelegramWebhook(txt,'test-bot','test-key','https://example.com');
   assert.equal(extractions.at(-1)?.sourceType,'text');assert.equal(extractions.at(-1)?.text,fileContent);assert.equal(inserts,2);
+  assert.ok(replyIds.length>0&&replyIds.every(id=>id===1||id===2),'Results reply to their own source message');
   const large=make(3);large.message!.document={file_id:'huge',file_name:'huge.pdf',mime_type:'application/pdf',file_size:30*1024*1024};
   const before=downloads;await handler.handleTelegramWebhook(large,'test-bot','test-key','https://example.com');assert.equal(downloads,before);assert.match(messages.at(-1)||'',/terlalu besar/);
   env.TELEGRAM_MAX_FILE_BYTES='1024';fileContent='x'.repeat(2000);

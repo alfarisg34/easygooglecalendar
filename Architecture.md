@@ -215,7 +215,7 @@ Dashboard memakai kolom `minmax(0, ...)` agar ukuran minimum konten tidak memper
 * **Metadata Unggahan**: Adapter Drive mengembalikan fileName dan mimeType aktual beserta fileId/fileUrl. Jika folder tersedia tetapi unggahan sumber gagal, hasil arsip success: false tetap menyertakan folderId/folderUrl dan pesan kegagalan. Event Calendar yang sudah dibuat dipertahankan.
 
 #### `telegram-handler.ts` (Bot Telegram Terintegrasi)
-* **Animated Progress Bar Engine**: Mengirim dan memperbarui bilah persentase kemajuan menggunakan `setInterval` asinkron dengan rotasi pesan kontekstual.
+* **Indikator tunggu AI**: Timer asinkron memperbarui pesan menunggu hasil AI tanpa persentase atau klaim tahap Calendar. Hanya satu edit berjalan; hasil akhir menunggu penghentian timer.
 * **Verifikasi Kontak (Phone Binding)**: Memproses pesan kontak (`msg.contact`) untuk menyinkronkan identitas Telegram ID dengan nomor HP yang didaftarkan pengguna di dashboard web.
 * **Handling Inline Keyboard & Direct Action**: Mengirim kartu hasil agenda dengan tombol langsung ke Google Calendar web dan Google Drive.
 
@@ -432,8 +432,14 @@ sequenceDiagram
     }
   }
   ```
-* Nilai `maxDuration: 60` detik menjamin proses ekstraksi berkas PDF berukuran besar (yang membutuhkan waktu round-trip AI 15–30 detik) tidak mengalami *premature function timeout*.
+* `maxDuration: 60` detik adalah batas eksekusi hosting, bukan jaminan penyelesaian. Rangkaian generateContent dibatasi total 40 detik dan maksimal 25 detik per model; unduhan/OCR/database/Google tetap memakai waktu tambahan.
 
 ### 7.2 Konektivitas Basis Data Neon PostgreSQL
 * Menggunakan pustaka `@neondatabase/serverless` yang berkomunikasi melalui protokol HTTP / WebSocket bawaan Neon.
 * Menghindari masalah kehabisan batas koneksi (*connection exhaustion*) yang umum terjadi pada database PostgreSQL tradisional saat ratusan fungsi serverless berjalan bersamaan.
+
+### Ketahanan ekstraksi Gemini (v1.3.1)
+
+`gemini.ts` menerapkan anggaran 40 detik untuk fetch dan pembacaan respons generateContent, maksimum 25 detik per model dengan fallback sesuai sisa waktu (minimum 3 detik). HTTP 404/429/5xx mencoba model berikutnya; autentikasi/validasi berhenti. Penanda retry dibersihkan setelah sukses atau galat permanen. Log per percobaan hanya berisi model, durasi, status, outcome dan hash identitas operasi. Ini tidak membatasi seluruh jalur OCR/Google ke 40 detik.
+
+`telegram-extraction.ts` membungkus ekstraksi PDF/poster/teks dan menyimpan hasil sukses beserta update sebelum dispatch. Kunci `ai-result` mencakup identitas operasi dan fingerprint pemilik/sumber; retensi terenkripsi tujuh hari. Retry pekerjaan tidak memanggil AI lagi setelah hasil berhasil disimpan. Cache `extraction` yang sudah ada tetap mempertahankan hasil agenda baru pada retry dispatch. Konteks worker membawa attempt dan managedRetry untuk pesan kegagalan sementara; handler memberi reply_parameters ke pesan asal untuk mengurangi ambiguitas hasil lama.

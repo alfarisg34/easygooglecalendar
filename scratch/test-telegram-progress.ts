@@ -42,7 +42,7 @@ async function main() {
       if (url.includes('/file/')) return new Response('source');
       const body = JSON.parse(args!.body) as { text?: string; message_id?: number };
       messages.push({ endpoint: url.split('/').at(-1)!, text: body.text || '', message_id: body.message_id });
-      if (url.endsWith('/editMessageText') && simulateSlowProgress && body.text?.includes('%')) {
+      if (url.endsWith('/editMessageText') && simulateSlowProgress && body.text?.includes('Menunggu hasil ekstraksi AI')) {
         progressStarted!();
         await new Promise<void>(resolve => { releaseProgress = resolve; });
       }
@@ -59,7 +59,7 @@ async function main() {
   await started;
   assert.equal(updates, 0, 'Final work waits for any in-flight progress edit');
   await tick();
-  assert.equal(messages.filter(message => message.text.includes('%')).length, 2, 'A second tick must not overlap the pending edit');
+  assert.equal(messages.filter(message => message.text.includes('Menunggu hasil ekstraksi AI')).length, 1, 'A second tick must not overlap the pending edit');
   releaseProgress!();
   await work;
   assert.equal(cleared, true);

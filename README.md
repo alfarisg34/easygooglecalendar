@@ -1,10 +1,10 @@
 # 📅 EasyCal // Serverless OCR & Gemini Calendar Studio
 
-Versi rilis: **1.3.0**. Lihat [catatan rilis](CHANGELOG.md) untuk perubahan dan batas verifikasi.
+Versi rilis: **1.3.1**. Lihat [catatan rilis](CHANGELOG.md) untuk perubahan dan batas verifikasi.
 
 Fitur P0/P1 bot dan lampiran Calendar tersedia dalam rilis Git **1.3.0**. Lihat [panduan bot, migrasi webhook, konfigurasi worker, dan perintah baru](Telegram.md). Setelah penerapan, webhook lama wajib disinkronkan ulang melalui Pengaturan oleh pemilik bot/admin. Siapkan database persisten, `SESSION_SECRET`, `TELEGRAM_ADMIN_EMAILS` untuk bot global, serta `CRON_SECRET` untuk pemulihan antrean.
 
-Validasi lokal: `npm run lint`, `npm test` (11 suite offline), `npm run typecheck`, `npm run build`, dan `git diff --check`. Lint memakai ESLint CLI dan `eslint.config.mjs` dengan preset Next.js Core Web Vitals, menggantikan `next lint`. Hasil migrasi: 0 error dan 6 warning font/gambar/navigasi; pemeriksaan tipe tetap terpisah. `npm run telegram:worker` tersedia untuk host persisten yang membutuhkan pemicu antrean lebih sering dari cron harian bawaan. Pengujian offline tidak memverifikasi layanan produksi.
+Validasi lokal: `npm run lint`, `npm test` (12 suite offline), `npm run typecheck`, `npm run build`, dan `git diff --check`. Lint memakai ESLint CLI dan `eslint.config.mjs` dengan preset Next.js Core Web Vitals, menggantikan `next lint`. Hasil migrasi: 0 error dan 6 warning font/gambar/navigasi; pemeriksaan tipe tetap terpisah. `npm run telegram:worker` tersedia untuk host persisten yang membutuhkan pemicu antrean lebih sering dari cron harian bawaan. Pengujian offline tidak memverifikasi layanan produksi.
 
 
 Layanan publik **Serverless OCR & Multimodal AI** untuk mengekstrak dokumen surat dinas (PDF), poster kegiatan (JPG/PNG), dan pesan broadcast chat ke **Google Calendar** secara instan dengan otentikasi **Google OAuth 2.0**, manajemen pengaturan kredensial (BYOK), dan integrasi basis data **Neon PostgreSQL** di **Vercel**.
@@ -105,7 +105,7 @@ Verifikasi tanpa layanan nyata: `node --experimental-strip-types scratch/test-ph
 - Jika kegiatan belum dapat ditentukan, ketik `/agenda`, lalu `/update 1 jam menjadi 13.00` atau `/update 1 tempat menjadi Ruang B`. Nomor merujuk ke daftar terakhir dan berlaku 15 menit. Untuk surat gambar, gunakan caption `#poster` agar masuk alur ekstraksi agenda.
 - Perubahan jam saja mempertahankan tanggal dan durasi lama; perubahan tempat saja mempertahankan waktu. Jika jam akhir baru disebutkan, jam tersebut digunakan. Perubahan menggunakan event Google Calendar dan folder dokumentasi yang sama.
 - Jika Google Calendar gagal diperbarui, jadwal baru disimpan di EasyCal. Ketik `/agenda` lagi, lalu `sinkron 1` sesuai nomor kegiatan untuk mencoba ulang. Pemilihan yang kedaluwarsa atau ambigu tidak membuat agenda baru.
-- Hasil update atau pesan kegagalannya mengganti pesan progress. Jika Telegram menolak edit, hasil dikirim sebagai pesan baru. Setelah pratinjau dikonfirmasi, balasan sukses menunjukkan pembaruan sudah selesai; persentase animasi merupakan indikator menunggu, bukan ukuran sinkronisasi Google.
+- Hasil update atau pesan kegagalannya mengganti pesan progress. Jika Telegram menolak edit, hasil dikirim sebagai pesan baru. Setelah pratinjau dikonfirmasi, balasan sukses menunjukkan pembaruan sudah selesai; indikator menunggu AI tidak memakai persentase atau mengklaim sinkronisasi sebelum hasil tersedia.
 
 Verifikasi penutupan progress tanpa chat nyata: `node --experimental-strip-types scratch/test-telegram-progress.ts`.
 
@@ -136,3 +136,7 @@ Setiap perubahan wajib memperbarui changelog dan seluruh dokumen yang terdampak 
 Permintaan **push Git** mencakup rilis aplikasi: perbarui dokumentasi yang terdampak, tinjau/perbarui `.gitignore`, selaraskan versi dan catatan rilis, jalankan pemeriksaan, lalu commit dan push branch/tag sesuai [AGENTS.md](AGENTS.md). Menambahkan aturan ini tidak memulai push.
 
 Tes regresi, runner, loader, dan worker dalam `scratch/` tetap disertakan karena dipakai pengujian/CI dan operasional. Percobaan baru ditempatkan di `scratch/local/`; empat skrip percobaan lama `test-36.js`, `test-gemini.js`, `test-models.js`, serta `verify.js` tidak lagi dilacak, dengan salinan lokal tetap tersedia. `.gitignore` juga melindungi environment/kredensial lokal, cache, build, laporan pemeriksaan dan file sementara; `.env.example` tetap disertakan. Hindari mengabaikan seluruh scratch atau menghapus tes yang masih diperlukan.
+
+## Ketahanan timeout Gemini (v1.3.1)
+
+Ekstraksi agenda memakai batas 25 detik per model dan total 40 detik untuk rangkaian Gemini, termasuk pembacaan respons. Model berikutnya memakai sisa waktu; batas ini tidak mencakup unduhan, OCR alternatif, database, atau operasi Google lainnya dan tidak menjamin seluruh request selesai dalam 60 detik. Hasil AI Telegram yang sudah berhasil (termasuk revisi) disimpan terenkripsi tujuh hari sebelum dispatch dan dipakai kembali oleh retry pekerjaan yang sama. Balasan menunjuk pesan asal agar hasil yang terlambat tidak tertukar dengan perintah baru. Kegagalan sementara pada percobaan 1–2 menjelaskan bahwa pekerjaan menunggu worker; pengaturan scheduler tetap diperlukan. Lihat [Telegram.md](Telegram.md) untuk diagnostik dan batas verifikasi.
