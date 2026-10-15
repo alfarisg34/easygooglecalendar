@@ -8,6 +8,33 @@ Format mengikuti [Keep a Changelog](https://keepachangelog.com/id/1.0.0/) dan su
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-10-15
+
+### Fixed
+
+- Webhook Telegram menargetkan job update/album yang baru diterima, sehingga pesan atau klik konfirmasi tidak lagi hanya menjalankan satu pekerjaan global lama lalu tertinggal sampai pesan berikutnya.
+- Job yang tertahan kunci chat, album yang masih dikumpulkan, retry due, dan backlog berikutnya mendapatkan pemicu kelanjutan internal. Tunggu dan pemrosesan AI memakai invokasi terpisah; CAS/lease dan batas tiga percobaan tetap dipertahankan. Album terlambat yang dialihkan ke job tunggal tetap diproses.
+
+### Security
+
+- POST worker internal memakai kapabilitas acak 32 byte, sekali pakai dengan CAS, terikat satu job dan berlaku 60 detik. Replay diakui tanpa menjadwalkan ulang; origin hanya dari NEXT_PUBLIC_APP_URL HTTPS tepercaya, tanpa kredensial/redirect. Token tidak dikirim di URL/log. Akses scheduler global tetap memerlukan Bearer CRON_SECRET.
+
+### Added
+
+- State terenkripsi queue-wake, batas 40 hop per attempt, jeda maksimal 10 detik per invokasi tunggu, serta dua upaya handoff per token dengan timeout lima detik. Gangguan handoff meninggalkan job persisten untuk scheduler cadangan.
+- Suite regresi kelanjutan menguji target webhook, backlog, chat sibuk, retry/album tanpa pesan baru, invokasi AI terpisah dari tunggu, duplikasi pemicu, replay/scope/expiry token, validasi body, otorisasi scheduler, kegagalan jaringan dan batas hop. Dokumentasi produk, arsitektur, kontrak, desain, aturan, README, panduan bot dan template environment diselaraskan.
+
+### Changed
+
+- Rilis patch 1.3.2 menyelaraskan versi paket/lockfile, README, panduan bot, footer berbasis versi paket dan halaman changelog. Pola .gitignore ditinjau; capture browser, konfigurasi rahasia, build dan percobaan lokal tetap diabaikan, sedangkan tes regresi disertakan.
+
+### Validation
+
+- Persiapan rilis 1.3.2 (2026-10-15): npm test (13 suite offline), npm run lint (0 error, 6 warning lama), npm run typecheck, npm run build, 22 tautan lokal, konsistensi versi paket/lockfile/dokumentasi, audit 18 berkas rilis terhadap kredensial lokal/artefak privat dan git diff --check lulus. Pola ignore tetap sesuai; pengujian produksi setelah deployment belum dilakukan.
+- Tes memakai worker dalam proses/layanan tiruan, state terisolasi dan jam simulasi; belum membuktikan self-call domain Vercel produksi diizinkan. Build memberi warning fs/zlib bawaan; warning module type dan log kegagalan layanan simulasi tidak menggagalkan suite.
+- Pemeriksaan browser pada versi produksi 1.3.1 sebelumnya menunjukkan indikator menunggu AI dan reply pesan asal bekerja, tetapi konfirmasi baru masih tertahan sementara pekerjaan lama diproses; perubahan lokasi pada event Calendar yang sama akhirnya berhasil setelah pemicu pesan tambahan. Hasil tersebut mereproduksi masalah antrean lama, bukan verifikasi perbaikan lokal ini.
+- NEXT_PUBLIC_APP_URL produksi harus menunjuk origin HTTPS yang bisa diakses server sendiri. Scheduler/worker eksternal tetap diperlukan sebagai cadangan jika domain terproteksi, pemanggilan internal gagal, fungsi mati sebelum handoff atau batas hop tercapai. Rilis Git ini belum diverifikasi setelah deployment pada Telegram/Neon produksi; keberhasilan push/tag tidak membuktikan keberhasilan deployment.
+
 ## [1.3.1] - 2026-10-15
 
 ### Fixed

@@ -1,7 +1,7 @@
 # Design & UI/UX System Document
 ## EasyCal // Industrial Cockpit & Editorial Precision
 
-### Interaksi bot P0/P1 — Unreleased
+### Interaksi bot P0/P1 — sejak v1.3.0
 
 Bot menampilkan tombol maksimal dua per baris agar pilihan foto/paginasi nyaman dibaca pada ponsel. Pilihan menampilkan judul dan waktu kegiatan sebelum pengguna memilih nomor. Album menerima satu tujuan dan ringkasan akhir, bukan satu balasan sukses per foto. Foto tanpa bukti waktu tetap ditandai tidak terbaca.
 
@@ -202,3 +202,7 @@ Hasil ekstraksi web menampilkan pesan **Berkas undangan terlampir di event Googl
 ### Feedback timeout dan retry (v1.3.1)
 
 Pesan awal menyatakan pemrosesan dimulai. Selama ekstraksi, indikator menyatakan menunggu hasil AI; status kalender dilaporkan pada hasil akhir. Gagal sementara pada percobaan 1–2 menyatakan pekerjaan menunggu worker, tidak perlu mengirim ulang, dan mengarahkan ke /status tanpa janji waktu lanjut. Hasil baru membalas pesan asal melalui [ReplyParameters Telegram](https://core.telegram.org/bots/api#replyparameters) agar respons lama tidak tampak sebagai jawaban perintah baru. Galat permanen dan batas percobaan tetap dinyatakan gagal.
+
+### Kelanjutan antrean bot (v1.3.2)
+
+Sesudah klik konfirmasi, sistem menargetkan pekerjaan callback tersebut dan melanjutkan sendiri bila chat masih sibuk. Pengguna tidak diarahkan mengirim /status berulang sebagai cara memicu pekerjaan. Status menunggu AI/retry dan balasan ke pesan asal tetap digunakan; hanya pesan hasil Google yang menyatakan perubahan berhasil. Gangguan handoff/scheduler tidak boleh ditampilkan sebagai keberhasilan perubahan.

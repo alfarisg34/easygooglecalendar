@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-const suites=['test-gemini-resilience.ts','test-bot-security.ts','test-bot-queue.ts','test-bot-workflows.ts','test-bot-ingestion.ts','test-bot-idempotency.ts','test-calendar-attachments.ts',
+const suites=['test-telegram-queue-continuation.ts','test-gemini-resilience.ts','test-bot-security.ts','test-bot-queue.ts','test-bot-workflows.ts','test-bot-ingestion.ts','test-bot-idempotency.ts','test-calendar-attachments.ts',
   'test-event-lifecycle.ts','test-photo-timestamp.ts','test-google-auth-recovery.ts','test-telegram-progress.ts','test-changelog.ts'];
 for(const suite of suites) {
   const result=spawnSync(process.execPath,['--experimental-strip-types',`scratch/${suite}`],{encoding:'utf8',timeout:60000,env:process.env});

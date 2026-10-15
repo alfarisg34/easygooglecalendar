@@ -1,12 +1,12 @@
 # Product Requirements Document (PRD)
 ## EasyCal // Serverless OCR & Gemini Calendar Studio
 
-### Perluasan P0/P1 — Unreleased
+### Perluasan P0/P1 — sejak v1.3.0
 
 | Kebutuhan | Perilaku yang tersedia |
 |---|---|
 | Keamanan bot/akun | Setup hanya pemilik/admin, pemeriksaan Origin, secret webhook, kontak milik pengirim, binding dan OAuth state sekali pakai; identitas akun pada endpoint web berasal dari sesi. |
-| Ketahanan | Antrean persisten terenkripsi, deduplikasi update, lease worker/chat, percobaan ulang terbatas, ID Calendar/Drive/riwayat stabil, status dan kuota pengguna. Pemulihan tanpa pesan baru memerlukan penjadwal worker. |
+| Ketahanan | Antrean persisten terenkripsi, deduplikasi update, lease worker/chat, percobaan ulang terbatas, ID Calendar/Drive/riwayat stabil, status dan kuota pengguna. Kelanjutan normal menargetkan job baru dan memakai pemicu internal; scheduler tetap diperlukan sebagai cadangan gangguan handoff. |
 | Validasi ekstraksi | Waktu mulai tidak diketahui tetap kosong. Asumsi waktu akhir memerlukan pemeriksaan. Bot menyediakan pelengkapan dan konfirmasi; web menahan penyimpanan dan meminta koreksi sumber. |
 | Foto/album | Pilih kegiatan di Telegram, cari/paginasi kandidat, satu tujuan/ringkasan album; waktu pengambilan yang tidak diketahui tetap kosong. |
 | Perubahan | Pratinjau semula → menjadi, konfirmasi, pemeriksaan versi, audit perubahan dan undo terakhir; sumber revisi diarsipkan/dilampirkan pada kegiatan yang sama. |
@@ -184,4 +184,8 @@ EasyCal menyediakan solusi terintegrasi:
 
 ### Penanganan timeout (v1.3.1)
 
-Hasil ekstraksi Telegram yang berhasil, termasuk perubahan, disimpan sebelum dispatch dan digunakan ulang saat retry operasi yang sama. Kegagalan sementara membedakan menunggu worker dari kegagalan final; hasil handler membalas pesan asal agar keterlambatan tidak disalahartikan sebagai respons perintah terbaru. Indikator menunggu AI tidak menyatakan progres Calendar. Batas tiga percobaan dan kebutuhan scheduler tetap berlaku.
+Hasil ekstraksi Telegram yang berhasil, termasuk perubahan, disimpan sebelum dispatch dan digunakan ulang saat retry operasi yang sama. Kegagalan sementara membedakan menunggu worker dari kegagalan final; hasil handler membalas pesan asal agar keterlambatan tidak disalahartikan sebagai respons perintah terbaru. Indikator menunggu AI tidak menyatakan progres Calendar. Batas tiga percobaan tetap berlaku; scheduler memulihkan pekerjaan ketika pemicu kelanjutan internal gagal.
+
+### Kelanjutan pekerjaan (v1.3.2)
+
+Pesan dan callback baru menargetkan job yang baru diterima, tanpa sekadar menjalankan satu job global lama. Pekerjaan tertahan kunci chat, album yang masih dikumpulkan dan retry due melanjutkan diri melalui pemicu internal satu pekerjaan; pengguna tidak perlu mengirim pesan tambahan pada alur normal. Job tetap persisten saat pemicu gagal. Pemanggilan ulang dibatasi dan diautentikasi token sekali pakai; koneksi domain produksi serta scheduler cadangan adalah prasyarat operasional, bukan bukti delivery guarantee. Kunci per chat mencegah overlap, tanpa menjanjikan FIFO ketat antar-worker/retry.

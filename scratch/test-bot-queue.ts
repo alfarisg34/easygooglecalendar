@@ -40,7 +40,7 @@ async function main() {
 
   const callbacks:Array<()=>Promise<void>>=[];
   const webhookRuntime=createLoader({'next/server':{NextResponse:{json:(body:unknown,init?:ResponseInit)=>Response.json(body,init)},after:(fn:()=>Promise<void>)=>callbacks.push(fn)},
-    './telegram-queue':{enqueueTelegramUpdate:async()=>{calls++;return 'queued';},drainTelegramQueue:async()=>0}},
+    './telegram-queue':{enqueueTelegramUpdate:async()=>{calls++;return 'queued';},drainTelegramQueue:async()=>0,telegramJobId:()=> 'job:test:1'}},
     {process:{env:{TELEGRAM_BOT_TOKEN:'bot'},cwd:()=>'/isolated'}});
   const webhook=webhookRuntime.load<typeof import('../lib/telegram-webhook')>('lib/telegram-webhook.ts');
   const security=webhookRuntime.load<typeof import('../lib/telegram-security')>('lib/telegram-security.ts');

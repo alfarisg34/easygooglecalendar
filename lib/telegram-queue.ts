@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { BotState, botIdentity, cleanBotStates, dueBotStates, readBotState, writeBotState } from './telegram-state';
 import { TelegramUpdate } from './types';
 import { telegramContext } from './telegram-context';
+import { scheduleTelegramQueueWake } from './telegram-queue-wake';
 
 export interface TelegramJob {
   botToken:string; origin:string; updates:TelegramUpdate[]; status:'pending'|'processing'|'done'|'failed';
@@ -33,11 +34,15 @@ async function admitJob(id:string,botToken:string,userId:number):Promise<boolean
   }
   throw new Error('Penerimaan pekerjaan masih diproses.');
 }
+export function telegramJobId(update: TelegramUpdate, botToken: string): string {
+  const album = update.message?.media_group_id;
+  return `job:${botIdentity(botToken)}:${album ? `album:${messageOf(update)?.chat.id}:${album}` : update.update_id}`;
+}
 export async function enqueueTelegramUpdate(update:TelegramUpdate,botToken:string,origin:string):Promise<'queued'|'duplicate'|'limited'> {
   const msg=messageOf(update);
   const album=update.message?.media_group_id;
   const freeCommand=Boolean(update.callback_query) || /^\/(?:status|help|connect|login|auth|start|disconnect|agenda|dibatalkan|cari|lampau|hariini|besok|minggu|gdrive|apikey|tutorial)(?:\s|$)/i.test(msg?.text||'');
-  const id=`job:${botIdentity(botToken)}:${album ? `album:${msg?.chat.id}:${album}` : update.update_id}`;
+  const id=telegramJobId(update,botToken);
   for(let i=0;i<10;i++) {
     const row=await readBotState<TelegramJob>(id);
     if(row?.value.updates.some(item=>item.update_id===update.update_id))return 'duplicate';
@@ -114,9 +119,35 @@ async function processJob(row:BotState<TelegramJob>):Promise<boolean> {
     if(current?.value.owner===owner)await writeBotState(lockId,'lock',{leaseUntil:0,owner},current.version,now,current.expires);
   }
 }
-export async function drainTelegramQueue():Promise<number> {
+/** Continue this job when its due time/chat lease allows; no sleeping inside an AI request. */
+export async function continueTelegramJob(jobId: string, resumeToken?: string): Promise<boolean> {
+  const row = await readBotState<TelegramJob>(jobId);
+  if (!row || row.value.status === 'done' || row.value.status === 'failed') return false;
+  const msg = messageOf(row.value.updates[0]);
+  const lock = await readBotState<{leaseUntil:number}>(`chat-lock:${botIdentity(row.value.botToken)}:${msg?.chat.id}`);
+  const due = Math.max(row.due, row.value.leaseUntil, lock?.value.leaseUntil || 0);
+  return scheduleTelegramQueueWake(jobId, due, row.value.attempts, resumeToken);
+}
+
+/** A webhook targets its own accepted job; a scheduler still drains global backlog. */
+export async function drainTelegramQueue(preferredJobId?: string, resumeToken?: string): Promise<number> {
   await cleanBotStates();
-  const rows=await dueBotStates<TelegramJob>('job',30);
-  for(const row of rows)if(await processJob(row))return 1;
-  return 0;
+  const target = preferredJobId ? await readBotState<TelegramJob>(preferredJobId) : null;
+  const rows = preferredJobId ? (target ? [target] : []) : await dueBotStates<TelegramJob>('job',30);
+  let processed = 0;
+  let handledJobId: string | undefined;
+  for (const row of rows) {
+    if (row.value.status === 'done' || row.value.status === 'failed') continue;
+    if (row.due <= Date.now() && await processJob(row)) { processed = 1; handledJobId = row.id; break; }
+    if (preferredJobId) break;
+  }
+  const continuation = preferredJobId || handledJobId;
+  if (continuation) await continueTelegramJob(continuation, resumeToken);
+  // A fresh invocation handles each next ready job with its full route budget.
+  const next = await dueBotStates<TelegramJob>('job',30);
+  for (const row of next) {
+    if (row.id === continuation || row.value.status === 'done' || row.value.status === 'failed') continue;
+    if (await continueTelegramJob(row.id)) break;
+  }
+  return processed;
 }

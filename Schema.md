@@ -1,7 +1,7 @@
 # Database Schema & Data Model Document
 ## EasyCal // Serverless Data Architecture & Contracts
 
-### State Telegram P0/P1 — Unreleased
+### State Telegram P0/P1 — sejak v1.3.0
 
 `telegram-state.ts` membuat tabel berikut secara idempoten ketika pertama kali dipakai. Database wajib untuk bot/OAuth produksi; kegagalan koneksi tidak dialihkan ke JSON lokal.
 
@@ -17,13 +17,13 @@ CREATE TABLE IF NOT EXISTS telegram_state (
 CREATE INDEX IF NOT EXISTS telegram_state_due_idx ON telegram_state (kind, due);
 ```
 
-`payload` adalah base64 dari IV 12 byte, ciphertext JSON, dan authentication tag 16 byte (AES-256-GCM; kunci SHA-256 dari SESSION_SECRET). `version` mendukung compare-and-swap, sedangkan `due`/`expires` adalah epoch milidetik. Kind meliputi bot, binding, oauth, job, lock, admission, quota, extraction, ai-result, status, action, notice, dan source-archive. Retensi dan kebijakan rotasi kunci ada di [Telegram.md](Telegram.md). Pengembangan tanpa database menggunakan `.telegram_state.json` yang diabaikan Git.
+`payload` adalah base64 dari IV 12 byte, ciphertext JSON, dan authentication tag 16 byte (AES-256-GCM; kunci SHA-256 dari SESSION_SECRET). `version` mendukung compare-and-swap, sedangkan `due`/`expires` adalah epoch milidetik. Kind meliputi bot, binding, oauth, job, lock, admission, quota, extraction, ai-result, queue-wake, status, action, notice, dan source-archive. Retensi dan kebijakan rotasi kunci ada di [Telegram.md](Telegram.md). Pengembangan tanpa database menggunakan `.telegram_state.json` yang diabaikan Git.
 
 Job menyimpan update, kredensial bot terenkripsi, origin, status pending/processing/done/failed, attempts, leaseUntil dan receivedAt. Kunci job menggabungkan hash bot dengan update_id atau identitas album/chat. Action menyimpan pemilik, aktor, chat, bot, ID/versi kegiatan, snapshot sebelum/sesudah, referensi file Telegram atau teks, pilihan kandidat, lease dan status konsumsi. Biner unduhan tidak disimpan dalam action. `source-archive` menghubungkan metadata berkas revisi dengan kegiatan/pemilik selama satu tahun. Ini tidak mengubah format plaintext kredensial yang sudah ada pada tabel users.
 
 `CalendarEvent` dapat memuat `validation_warnings: string[]` dan `needs_confirmation: boolean`; waktu tidak terbaca berupa string kosong dan tidak boleh disimpan sebagai event baru. API ekstraksi web mengembalikan `requiresConfirmation: true` untuk hasil tersebut, tanpa ICS, history atau auto-sync. `EventUpdate.end_date` mendukung snapshot undo lintas hari, dan clock menerima HH:mm atau HH:mm:ss. Riwayat lifecycle menyimpan uraian perubahan semula/menjadi pada reason. Event dan foto memakai ID stabil serta upsert metadata sinkronisasi untuk retry.
 
-Setup webhook menerima POST `{ action, botToken? }` dengan sesi dan Origin yang valid. Token harus milik akun tersimpan atau admin terdaftar. URL webhook yang dikembalikan hanya memuat hash bot. Worker menerima Bearer CRON_SECRET. Parameter identitas pengguna dari body/header/query tidak mengotorisasi akses unggahan, dokumentasi atau status akun; identitas diambil dari sesi.
+Setup webhook menerima POST `{ action, botToken? }` dengan sesi dan Origin yang valid. Token harus milik akun tersimpan atau admin terdaftar. URL webhook yang dikembalikan hanya memuat hash bot. Worker scheduler menerima Bearer CRON_SECRET; POST internal hanya menerima kapabilitas sekali pakai yang terikat satu job (lihat kontrak kelanjutan di bawah). Parameter identitas pengguna dari body/header/query tidak mengotorisasi akses unggahan, dokumentasi atau status akun; identitas diambil dari sesi.
 
 ---
 
@@ -381,3 +381,9 @@ Bila sistem dijalankan tanpa koneksi `DATABASE_URL`:
 State `ai-result:<operationId>:<fingerprint>` menyimpan `{ success: true, event: CalendarEvent, modelUsed?, engineUsed? }` terenkripsi selama tujuh hari. Fingerprint SHA-256 meliputi pemilik, jenis sumber, teks/base64 sumber dan MIME; biner asli/API key tidak disimpan pada cache ini. Event mempertahankan update parsial serta peringatan. Hasil gagal tidak disimpan. Ini terpisah dari state extraction lama pada dispatch agenda baru dan tidak mengubah tabel extracted_events.
 
 Konteks eksekusi AsyncLocalStorage menambahkan attempt (nomor percobaan pekerjaan), managedRetry dan replyToMessageId; field ini tidak menambah kolom database. sendMessage memakai reply_parameters `{ message_id, allow_sending_without_reply: true }`; editMessageText tidak mengirim parameter reply.
+
+### Kontrak kelanjutan worker (v1.3.2)
+
+Kind queue-wake memakai ID queue-wake:<SHA-256 jobId>. Payload terenkripsi menyimpan `{ jobId, token, consumed, notBefore, validUntil, attempt, hops }`. Token acak 32 byte diwakili 64 karakter hex, berlaku 60 detik. Record direvisi dengan CAS dan bertahan tujuh hari; hops dibatasi 40 per attempt. Kapabilitas aktif dapat diganti oleh worker pemilik token konsumsi, atau setelah validUntil lewat. Tidak menambah kolom/tabel atau mengubah payload job lama.
+
+POST /api/telegram/worker tanpa header Authorization membutuhkan JSON `{ jobId, wakeToken }` maksimum 2048 byte, jobId berformat job:<hash bot 24 hex>:<identitas update/album>. Token tidak memberi akses ke job lain atau drain global. Respons 202 untuk token valid/replay valid; hanya konsumsi pertama menjadwalkan after(). 400 JSON rusak, 403 token salah/kedaluwarsa, 413 ukuran berlebih, 503 kegagalan state. GET/POST dengan Authorization tetap menggunakan Bearer CRON_SECRET dan respons sinkron `{ ok, processed }`.

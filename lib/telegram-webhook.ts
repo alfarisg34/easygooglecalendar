@@ -1,7 +1,7 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import { safeEqual, webhookSecret } from './telegram-security';
 import { botIdentity, readBotState, writeBotState } from './telegram-state';
-import { drainTelegramQueue, enqueueTelegramUpdate } from './telegram-queue';
+import { drainTelegramQueue, enqueueTelegramUpdate, telegramJobId } from './telegram-queue';
 import { TelegramUpdate } from './types';
 
 export async function telegramWebhook(req:NextRequest) {
@@ -23,8 +23,7 @@ export async function telegramWebhook(req:NextRequest) {
         const msg=update.callback_query?.message||update.message;
         if(msg)await sendTelegramMessage({botToken:token,chatId:msg.chat.id,text:'Batas pemrosesan per jam tercapai. Coba kembali pada jam berikutnya.'});});
     } else after(async()=>{
-      if(update.message?.media_group_id)await new Promise(resolve=>setTimeout(resolve,4500));
-      await drainTelegramQueue();
+      await drainTelegramQueue(telegramJobId(update,token));
     });
     return NextResponse.json({ok:true});
   } catch { return NextResponse.json({ok:false,error:'Antrean belum tersedia. Telegram dapat mencoba kembali.'},{status:503}); }
