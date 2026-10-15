@@ -8,6 +8,18 @@ Format mengikuti [Keep a Changelog](https://keepachangelog.com/id/1.0.0/) dan su
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-10-15
+
+### Changed
+
+- Rilis dokumentasi mencatat hasil uji produksi v1.3.2 dan batas verifikasinya; versi paket/lockfile, README, panduan bot, footer berbasis versi paket dan halaman changelog diselaraskan ke 1.3.3. Perilaku aplikasi serta dependensi tidak berubah.
+
+### Validation
+
+- Pemeriksaan browser produksi 2026-10-15 setelah deployment v1.3.2: footer menunjukkan versi 1.3.2; permintaan update pukul 11.02.21 WIB menghasilkan pratinjau 11.02.38, konfirmasi sekitar 11.02.55 menghasilkan sukses Calendar 11.02.57 dan laporan arsip/lampiran 11.02.59 tanpa pesan pemicu tambahan. Event yang sama diverifikasi langsung di Calendar pada 16 Oktober 2026 13.00–14.00 WIB, lokasi Ruang Uji Otomatis 1.3.2.
+- Uji chat sibuk: update uji dan /status dikirim berurutan sekitar 11.04.00–11.04.01 WIB; pratinjau muncul 11.04.05 dan status menyusul 11.04.13 tanpa pesan ketiga. Pratinjau uji tambahan dibatalkan dan bot mengonfirmasi pembatalan 11.04.29. Ini memverifikasi kelanjutan yang terlihat pengguna pada skenario tersebut; log internal self-call/Neon, retry karena gangguan nyata, album dan pemulihan fungsi mati belum diperiksa di produksi.
+- Rilis ini hanya mengubah dokumentasi dan metadata versi. Konsistensi isi/versi, 23 tautan lokal, tes regresi format changelog/footer (test-changelog.ts) serta git diff --check lulus. Tes changelog memberi warning module type yang tidak menggagalkan pemeriksaan. Pola .gitignore dan berkas terlacak ditinjau; tidak perlu pola tambahan. Lint, pemeriksaan tipe, suite aplikasi lengkap dan build tidak diulang karena kode/dependensi tidak berubah; hasil lulus sebelumnya tetap tercatat pada 1.3.2. Status deployment 1.3.3 perlu diverifikasi terpisah.
+
 ## [1.3.2] - 2026-10-15
 
 ### Fixed

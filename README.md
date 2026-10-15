@@ -1,6 +1,6 @@
 # 📅 EasyCal // Serverless OCR & Gemini Calendar Studio
 
-Versi rilis: **1.3.2**. Lihat [catatan rilis](CHANGELOG.md) untuk perubahan dan batas verifikasi.
+Versi rilis: **1.3.3**. Lihat [catatan rilis](CHANGELOG.md) untuk perubahan dan batas verifikasi.
 
 Fitur P0/P1 bot dan lampiran Calendar tersedia dalam rilis Git **1.3.0**. Lihat [panduan bot, migrasi webhook, konfigurasi worker, dan perintah baru](Telegram.md). Setelah penerapan, webhook lama wajib disinkronkan ulang melalui Pengaturan oleh pemilik bot/admin. Siapkan database persisten, `SESSION_SECRET`, `TELEGRAM_ADMIN_EMAILS` untuk bot global, serta `CRON_SECRET` untuk pemulihan antrean.
 

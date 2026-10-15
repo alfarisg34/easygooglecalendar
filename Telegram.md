@@ -1,6 +1,6 @@
 # Bot Telegram EasyCal — P0 dan P1
 
-Panduan mencakup rilis Git **1.3.2** (2026-10-15); fitur dasar P0/P1 tersedia sejak 1.3.0. Keberhasilan tag/push tidak membuktikan deployment atau layanan produksi sudah terverifikasi. Panduan ini melengkapi [README](README.md), [Architecture](Architecture.md), dan [Schema](Schema.md).
+Panduan mencakup rilis Git **1.3.3** (2026-10-15); fitur dasar P0/P1 tersedia sejak 1.3.0. Keberhasilan tag/push tidak membuktikan deployment atau layanan produksi sudah terverifikasi. Panduan ini melengkapi [README](README.md), [Architecture](Architecture.md), dan [Schema](Schema.md).
 
 ## Persiapan dan migrasi webhook
 
@@ -72,3 +72,9 @@ Jalankan `npm run lint`, `npm test`, `npm run typecheck`, `npm run build`, dan `
 - GET atau POST dengan Authorization Bearer CRON_SECRET tetap memakai kontrak scheduler eksternal `{ ok, processed }` yang sinkron. POST internal memakai token per job dan bukan akses umum ke antrean global; token ini tidak memerlukan CRON_SECRET baru. Scheduler dapat memulihkan state pending/lease setelah gangguan.
 - Jika URL tidak dikonfigurasi, deployment protection/WAF memblokir self-call, redirect diperlukan, jaringan/database gagal, fungsi mati sebelum handoff atau batas hop tercapai, pekerjaan tetap persisten dan membutuhkan pemicu scheduler/worker cadangan. Cron harian bawaan tetap ada; pemulihan cepat pada kegagalan tersebut memerlukan scheduler lebih sering/worker persisten. Log handoff hanya menyatakan kegagalan konfigurasi/pemanggilan/batas tanpa nilai token. Tidak ada jaminan exactly-once lintas layanan.
 - Pengujian kelanjutan memakai endpoint worker tiruan dalam proses dan jam simulasi. Ini membuktikan alur antrean/token, bukan bahwa self-call domain Vercel produksi sudah diizinkan. Setelah deploy, uji satu pesan dan klik konfirmasi tanpa mengirim /status tambahan; periksa balasan serta event Calendar yang sama.
+
+## Verifikasi produksi 15 Oktober 2026 (v1.3.2)
+
+Uji melalui Telegram Web dan Google Calendar memverifikasi pratinjau, konfirmasi perubahan lokasi pada event yang sama, serta laporan bot bahwa sumber revisi diarsip dan dilampirkan. Perubahan tersimpan pada agenda uji tanggal 16 Oktober 2026 pukul 13.00–14.00 WIB di Ruang Uji Otomatis 1.3.2. Daftar lampiran/isi berkas Drive tidak dibuka ulang pada pemeriksaan ini.
+
+Saat update dan `/status` dikirim berurutan pukul 11.04 WIB, pratinjau muncul pukul 11.04.05 dan status menyusul pukul 11.04.13 tanpa pesan ketiga; pratinjau tambahan kemudian dibatalkan. Hasil ini menunjukkan antrean melanjutkan pekerjaan pada skenario chat sibuk yang diuji. Ini belum memverifikasi log handoff internal/Neon, retry akibat gangguan nyata, album produksi atau pemulihan fungsi mati; pertahankan scheduler cadangan. Rincian waktu dan batas pemeriksaan dicatat di [CHANGELOG.md](CHANGELOG.md).
